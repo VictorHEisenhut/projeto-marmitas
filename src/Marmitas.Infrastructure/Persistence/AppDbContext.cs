@@ -27,6 +27,9 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<UserRole>().HasKey(ur => new { ur.UserId, ur.RoleId });
         modelBuilder.Entity<RolePermission>().HasKey(rp => new { rp.RoleId, rp.PermissionId });
 
+        modelBuilder.Entity<User>().Property(u => u.Status).HasConversion<string>();
+        modelBuilder.Entity<Order>().Property(o => o.Status).HasConversion<string>();
+
         var customerRoleId = Guid.Parse("00000000-0000-0000-0000-000000000001");
         modelBuilder.Entity<Role>().HasData(
             new Role("customer", "Cliente da plataforma") { Id = customerRoleId }
