@@ -22,7 +22,7 @@ public class JwtTokenService : ITokenService
         var key = _configuration["Jwt:Key"]!;
         var issuer = _configuration["Jwt:Issuer"];
         var audience = _configuration["Jwt:Audience"];
-        var minutes = int.Parse(_configuration["Jwt:ExpirationMinutes"] ?? "60");
+        var minutes = int.Parse(_configuration["Jwt:ExpirationMinutes"] ?? "5");
 
         var claims = new List<Claim>
         {
