@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Marmitas.Application.Restaurants.Queries;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -6,7 +7,6 @@ namespace Marmitas.Api.Controllers;
 
 [Route("api/restaurantes")]
 [ApiController]
-[AllowAnonymous]
 public class RestaurantsController : ControllerBase
 {
     private readonly IRestaurantQueryService _restaurantQueryService;
@@ -17,19 +17,59 @@ public class RestaurantsController : ControllerBase
     }
 
     [HttpGet]
+    [AllowAnonymous]
     public async Task<IActionResult> GetAll()
     {
         var restaurants = await _restaurantQueryService.GetAllPublicAsync();
         return Ok(restaurants);
     }
 
-    [HttpGet("{id}")] public IActionResult GetById(Guid id) => StatusCode(501);
-    [HttpPost] public IActionResult Create() => StatusCode(501);
-    [HttpPut("{id}")] public IActionResult Update(Guid id) => StatusCode(501);
-    [HttpPatch("{id}/status")] public IActionResult ChangeStatus(Guid id) => StatusCode(501);
-    [HttpDelete("{id}")] public IActionResult Delete(Guid id) => StatusCode(501);
+    [HttpGet("{id}")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetById(Guid id)
+    {
+        var restaurant = await _restaurantQueryService.GetByIdAsync(id);
+        return Ok(restaurant);
+    }
+
+    [HttpPost]
+    [Authorize]
+    public async Task<IActionResult> Create([FromBody] CreateRestaurantRequest request)
+    {
+        var subClaim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (!Guid.TryParse(subClaim, out var ownerId))
+            return Unauthorized();
+
+        var result = await _restaurantQueryService.CreateAsync(ownerId, request);
+        return StatusCode(201, result);
+    }
+
+    [HttpPut("{id}")]
+    [Authorize]
+    public async Task<IActionResult> Update(Guid id, [FromBody] CreateRestaurantRequest request)
+    {
+        var result = await _restaurantQueryService.UpdateAsync(id, request);
+        return Ok(result);
+    }
+
+    [HttpPatch("{id}/status")]
+    [Authorize]
+    public async Task<IActionResult> ChangeStatus(Guid id, [FromBody] UpdateRestaurantStatusRequest request)
+    {
+        var result = await _restaurantQueryService.ChangeStatusAsync(id, request.Status);
+        return Ok(result);
+    }
+
+    [HttpDelete("{id}")]
+    [Authorize]
+    public async Task<IActionResult> Delete(Guid id)
+    {
+        await _restaurantQueryService.DeleteAsync(id);
+        return NoContent();
+    }
 
     [HttpGet("{id}/cardapio")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetProducts(Guid id)
     {
         var products = await _restaurantQueryService.GetRestaurantProductsAsync(id);

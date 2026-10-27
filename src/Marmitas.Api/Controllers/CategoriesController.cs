@@ -1,3 +1,5 @@
+using Marmitas.Application.Restaurants.Queries;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Marmitas.Api.Controllers;
@@ -6,8 +8,42 @@ namespace Marmitas.Api.Controllers;
 [ApiController]
 public class CategoriesController : ControllerBase
 {
-    [HttpGet] public IActionResult GetAll() => StatusCode(501);
-    [HttpPost] public IActionResult Create() => StatusCode(501);
-    [HttpPut("{id}")] public IActionResult Update(Guid id) => StatusCode(501);
-    [HttpDelete("{id}")] public IActionResult Delete(Guid id) => StatusCode(501);
+    private readonly IRestaurantQueryService _restaurantQueryService;
+
+    public CategoriesController(IRestaurantQueryService restaurantQueryService)
+    {
+        _restaurantQueryService = restaurantQueryService;
+    }
+
+    [HttpGet]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetAll([FromQuery] Guid? restaurantId)
+    {
+        var categories = await _restaurantQueryService.GetCategoriesAsync(restaurantId);
+        return Ok(categories);
+    }
+
+    [HttpPost]
+    [Authorize]
+    public async Task<IActionResult> Create([FromBody] CreateCategoryRequest request)
+    {
+        var result = await _restaurantQueryService.CreateCategoryAsync(request);
+        return StatusCode(201, result);
+    }
+
+    [HttpPut("{id}")]
+    [Authorize]
+    public async Task<IActionResult> Update(Guid id, [FromBody] CreateCategoryRequest request)
+    {
+        var result = await _restaurantQueryService.UpdateCategoryAsync(id, request);
+        return Ok(result);
+    }
+
+    [HttpDelete("{id}")]
+    [Authorize]
+    public async Task<IActionResult> Delete(Guid id)
+    {
+        await _restaurantQueryService.DeleteCategoryAsync(id);
+        return NoContent();
+    }
 }

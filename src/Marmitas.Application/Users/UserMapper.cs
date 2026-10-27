@@ -13,8 +13,8 @@ public static class UserMapper
             Name = user.Name,
             Email = user.Email,
             Phone = user.Phone,
+            Status = user.Status.ToString(),
             Roles = user.GetRoleNames()
         };
     }
 }
-

@@ -28,6 +28,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<RolePermission>().HasKey(rp => new { rp.RoleId, rp.PermissionId });
 
         modelBuilder.Entity<User>().Property(u => u.Status).HasConversion<string>();
+        modelBuilder.Entity<Restaurant>().Property(r => r.Status).HasConversion<string>();
         modelBuilder.Entity<Order>().Property(o => o.Status).HasConversion<string>();
 
         var customerRoleId = Guid.Parse("00000000-0000-0000-0000-000000000001");

@@ -1,6 +1,6 @@
 using Marmitas.Application.Common.Interfaces;
 using Marmitas.Domain.Entities;
-using Marmitas.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 
 namespace Marmitas.Infrastructure.Persistence.Repositories;
 
@@ -18,9 +18,37 @@ public class OrderRepository : IOrderRepository
         await _context.Orders.AddAsync(order);
     }
 
+    public async Task<Order?> GetByIdAsync(Guid id)
+    {
+        return await _context.Orders
+            .Include(o => o.Items)
+            .Include(o => o.Restaurant)
+            .FirstOrDefaultAsync(o => o.Id == id);
+    }
+
+    public async Task<List<Order>> GetByCustomerIdAsync(Guid customerId)
+    {
+        return await _context.Orders
+            .AsNoTracking()
+            .Include(o => o.Items)
+            .Include(o => o.Restaurant)
+            .Where(o => o.CustomerId == customerId)
+            .OrderByDescending(o => o.CreatedAt)
+            .ToListAsync();
+    }
+
+    public async Task<List<Order>> GetAllAsync()
+    {
+        return await _context.Orders
+            .AsNoTracking()
+            .Include(o => o.Items)
+            .Include(o => o.Restaurant)
+            .OrderByDescending(o => o.CreatedAt)
+            .ToListAsync();
+    }
+
     public async Task<int> SaveChangesAsync()
     {
         return await _context.SaveChangesAsync();
     }
 }
-

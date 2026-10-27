@@ -8,6 +8,12 @@ namespace Marmitas.Application.Orders;
 public interface ICreateOrderService
 {
     Task<CreateOrderResponse> ExecuteAsync(Guid customerId, CreateOrderRequest request);
+    Task<List<OrderDto>> GetMyOrdersAsync(Guid customerId);
+    Task<List<OrderDto>> GetAllOrdersAsync();
+    Task<OrderDto> GetByIdAsync(Guid id);
+    Task<List<OrderItemDto>> GetItemsAsync(Guid id);
+    Task<OrderDto> CancelAsync(Guid id);
+    Task<OrderDto> UpdateStatusAsync(Guid id, string status);
 }
 
 public class CreateOrderService : ICreateOrderService
@@ -58,4 +64,87 @@ public class CreateOrderService : ICreateOrderService
             Status = order.Status.ToString()
         };
     }
+
+    public async Task<List<OrderDto>> GetMyOrdersAsync(Guid customerId)
+    {
+        var orders = await _orderRepository.GetByCustomerIdAsync(customerId);
+        return orders.Select(MapOrder).ToList();
+    }
+
+    public async Task<List<OrderDto>> GetAllOrdersAsync()
+    {
+        var orders = await _orderRepository.GetAllAsync();
+        return orders.Select(MapOrder).ToList();
+    }
+
+    public async Task<OrderDto> GetByIdAsync(Guid id)
+    {
+        var order = await _orderRepository.GetByIdAsync(id);
+        if (order == null)
+            throw new Exception("Pedido não encontrado.");
+
+        return MapOrder(order);
+    }
+
+    public async Task<List<OrderItemDto>> GetItemsAsync(Guid id)
+    {
+        var order = await _orderRepository.GetByIdAsync(id);
+        if (order == null)
+            throw new Exception("Pedido não encontrado.");
+
+        return order.Items.Select(MapItem).ToList();
+    }
+
+    public async Task<OrderDto> CancelAsync(Guid id)
+    {
+        var order = await _orderRepository.GetByIdAsync(id);
+        if (order == null)
+            throw new Exception("Pedido não encontrado.");
+
+        if (order.Status == OrderStatus.Delivered)
+            throw new Exception("Não é possível cancelar um pedido já entregue.");
+
+        order.Status = OrderStatus.Cancelled;
+        await _orderRepository.SaveChangesAsync();
+
+        return MapOrder(order);
+    }
+
+    public async Task<OrderDto> UpdateStatusAsync(Guid id, string status)
+    {
+        var order = await _orderRepository.GetByIdAsync(id);
+        if (order == null)
+            throw new Exception("Pedido não encontrado.");
+
+        if (!Enum.TryParse<OrderStatus>(status, true, out var parsedStatus))
+            throw new Exception("Status de pedido inválido.");
+
+        order.Status = parsedStatus;
+        await _orderRepository.SaveChangesAsync();
+
+        return MapOrder(order);
+    }
+
+    private static OrderDto MapOrder(Order o) => new()
+    {
+        Id = o.Id,
+        CustomerId = o.CustomerId,
+        RestaurantId = o.RestaurantId,
+        RestaurantName = o.Restaurant != null ? o.Restaurant.Name : string.Empty,
+        TotalAmount = o.TotalAmount,
+        Status = o.Status.ToString(),
+        CreatedAt = o.CreatedAt,
+        UpdatedAt = o.UpdatedAt,
+        Items = o.Items.Select(MapItem).ToList()
+    };
+
+    private static OrderItemDto MapItem(OrderItem i) => new()
+    {
+        Id = i.Id,
+        ProductId = i.ProductId,
+        ProductName = i.ProductName,
+        UnitPrice = i.UnitPrice,
+        Quantity = i.Quantity,
+        TotalPrice = i.TotalPrice
+    };
 }

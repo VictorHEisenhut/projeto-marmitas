@@ -20,12 +20,20 @@ public class UserRepository : IUserRepository
 
     public Task<User?> GetByEmailAsync(string email)
     {
-        return UsersWithRoles().FirstOrDefaultAsync(u => u.Email == email);
+        return UsersWithRoles().FirstOrDefaultAsync(u => u.Email == email && u.DeletedAt == null);
     }
 
     public Task<User?> GetByIdAsync(Guid id)
     {
-        return UsersWithRoles().FirstOrDefaultAsync(u => u.Id == id);
+        return UsersWithRoles().FirstOrDefaultAsync(u => u.Id == id && u.DeletedAt == null);
+    }
+
+    public Task<List<User>> GetAllAsync()
+    {
+        return UsersWithRoles()
+            .Where(u => u.DeletedAt == null)
+            .OrderBy(u => u.Name)
+            .ToListAsync();
     }
 
     public Task<Role?> GetRoleByNameAsync(string name)
@@ -34,6 +42,32 @@ public class UserRepository : IUserRepository
             .Include(r => r.RolePermissions)
             .ThenInclude(rp => rp.Permission)
             .FirstOrDefaultAsync(r => r.Name == name);
+    }
+
+    public Task<Role?> GetRoleByIdAsync(Guid id)
+    {
+        return _context.Roles.FirstOrDefaultAsync(r => r.Id == id);
+    }
+
+    public Task<List<Role>> GetAllRolesAsync()
+    {
+        return _context.Roles
+            .AsNoTracking()
+            .OrderBy(r => r.Name)
+            .ToListAsync();
+    }
+
+    public async Task AddRoleAsync(Role role)
+    {
+        await _context.Roles.AddAsync(role);
+    }
+
+    public Task<List<Permission>> GetAllPermissionsAsync()
+    {
+        return _context.Permissions
+            .AsNoTracking()
+            .OrderBy(p => p.Name)
+            .ToListAsync();
     }
 
     public async Task AddAsync(User user)
@@ -55,4 +89,3 @@ public class UserRepository : IUserRepository
             .ThenInclude(rp => rp.Permission);
     }
 }
-
