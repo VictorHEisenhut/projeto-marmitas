@@ -24,7 +24,7 @@ public class CategoriesController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> Create([FromBody] CreateCategoryRequest request)
     {
         var result = await _restaurantQueryService.CreateCategoryAsync(request);
@@ -32,7 +32,7 @@ public class CategoriesController : ControllerBase
     }
 
     [HttpPut("{id}")]
-    [Authorize]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> Update(Guid id, [FromBody] CreateCategoryRequest request)
     {
         var result = await _restaurantQueryService.UpdateCategoryAsync(id, request);
@@ -40,7 +40,7 @@ public class CategoriesController : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    [Authorize]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> Delete(Guid id)
     {
         await _restaurantQueryService.DeleteCategoryAsync(id);

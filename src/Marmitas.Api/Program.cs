@@ -21,6 +21,10 @@ builder.Services.AddDbContext<Marmitas.Infrastructure.Persistence.AppDbContext>(
 builder.Services.AddScoped<Marmitas.Application.Common.Interfaces.IUserRepository, Marmitas.Infrastructure.Persistence.Repositories.UserRepository>();
 builder.Services.AddScoped<Marmitas.Application.Common.Interfaces.IRestaurantRepository, Marmitas.Infrastructure.Persistence.Repositories.RestaurantRepository>();
 builder.Services.AddScoped<Marmitas.Application.Common.Interfaces.IOrderRepository, Marmitas.Infrastructure.Persistence.Repositories.OrderRepository>();
+builder.Services.AddScoped<Marmitas.Application.Common.Interfaces.ICustomerProfileRepository, Marmitas.Infrastructure.Persistence.Repositories.CustomerProfileRepository>();
+builder.Services.AddScoped<Marmitas.Application.Common.Interfaces.ISubscriptionRepository, Marmitas.Infrastructure.Persistence.Repositories.SubscriptionRepository>();
+builder.Services.AddScoped<Marmitas.Application.Common.Interfaces.IDeliveryRepository, Marmitas.Infrastructure.Persistence.Repositories.DeliveryRepository>();
+builder.Services.AddScoped<Marmitas.Application.Common.Interfaces.IPaymentRepository, Marmitas.Infrastructure.Persistence.Repositories.PaymentRepository>();
 builder.Services.AddScoped<Marmitas.Application.Common.Interfaces.IPasswordHasher, Marmitas.Infrastructure.Identity.BCryptPasswordHasher>();
 builder.Services.AddScoped<Marmitas.Application.Common.Interfaces.ITokenService, Marmitas.Infrastructure.Identity.JwtTokenService>();
 

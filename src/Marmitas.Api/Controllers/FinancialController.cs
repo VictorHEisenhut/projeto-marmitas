@@ -1,21 +1,30 @@
+using Marmitas.Application.Common.Interfaces;
 using Marmitas.Application.Orders;
+using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Marmitas.Api.Controllers;
 
 [ApiController]
-[Authorize]
 public class FinancialController : ControllerBase
 {
     private readonly ICreateOrderService _orders;
+    private readonly IPaymentRepository _payments;
+    private readonly IDeliveryRepository _deliveries;
 
-    public FinancialController(ICreateOrderService orders)
+    public FinancialController(
+        ICreateOrderService orders,
+        IPaymentRepository payments,
+        IDeliveryRepository deliveries)
     {
         _orders = orders;
+        _payments = payments;
+        _deliveries = deliveries;
     }
 
     [HttpGet("api/admin/financeiro/comissoes")]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> GetCommissions()
     {
         var orders = await _orders.GetAllOrdersAsync();
@@ -30,37 +39,77 @@ public class FinancialController : ControllerBase
     }
 
     [HttpGet("api/admin/financeiro/repasses")]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> GetPayouts()
     {
         var orders = await _orders.GetAllOrdersAsync();
-        var payouts = orders
-            .Where(o => o.Status != "Cancelled")
-            .GroupBy(o => new { o.RestaurantId, o.RestaurantName })
-            .Select(g => new
-            {
-                id = g.Key.RestaurantId,
-                restaurantId = g.Key.RestaurantId,
-                restaurantName = g.Key.RestaurantName,
-                grossAmount = g.Sum(x => x.TotalAmount),
-                netPayoutAmount = Math.Round(g.Sum(x => x.TotalAmount) * 0.90m, 2),
-                status = "Available"
-            });
+        var existingPayouts = await _payments.GetAllPayoutsAsync();
+        var changed = false;
 
-        return Ok(payouts);
+        var grouped = orders
+            .Where(o => o.Status != "Cancelled")
+            .GroupBy(o => o.RestaurantId);
+
+        foreach (var group in grouped)
+        {
+            var gross = group.Sum(x => x.TotalAmount);
+            var net = Math.Round(gross * 0.90m, 2);
+            var payout = existingPayouts.FirstOrDefault(p => p.TargetId == group.Key && p.TargetType == "Restaurant");
+            if (payout == null)
+            {
+                await _payments.AddPayoutAsync(new Payout
+                {
+                    TargetId = group.Key,
+                    TargetType = "Restaurant",
+                    GrossAmount = gross,
+                    NetAmount = net,
+                    Status = "Available"
+                });
+                changed = true;
+            }
+            else if (payout.Status == "Available")
+            {
+                payout.GrossAmount = gross;
+                payout.NetAmount = net;
+                changed = true;
+            }
+        }
+
+        if (changed)
+            await _payments.SaveChangesAsync();
+
+        var list = await _payments.GetAllPayoutsAsync();
+        return Ok(list);
     }
 
     [HttpPost("api/admin/financeiro/repasses/{id}/processar")]
-    public IActionResult ProcessPayout(Guid id)
+    [Authorize(Roles = "admin,super_admin")]
+    public async Task<IActionResult> ProcessPayout(Guid id)
     {
-        return Ok(new
+        var payout = await _payments.GetPayoutByIdAsync(id);
+        if (payout == null)
         {
-            payoutId = id,
-            status = "Processed",
-            processedAt = DateTime.UtcNow
-        });
+            payout = new Payout
+            {
+                TargetId = id,
+                TargetType = "Restaurant",
+                Status = "Processed",
+                ProcessedAt = DateTime.UtcNow
+            };
+            await _payments.AddPayoutAsync(payout);
+        }
+        else
+        {
+            payout.Status = "Processed";
+            payout.ProcessedAt = DateTime.UtcNow;
+        }
+
+        await _payments.SaveChangesAsync();
+        return Ok(payout);
     }
 
     [HttpGet("api/admin/financeiro/transacoes")]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> GetTransactions()
     {
         var orders = await _orders.GetAllOrdersAsync();
@@ -78,12 +127,15 @@ public class FinancialController : ControllerBase
     }
 
     [HttpGet("api/admin/financeiro/conciliacao")]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> GetReconciliation()
     {
         var orders = await _orders.GetAllOrdersAsync();
+        var payouts = await _payments.GetAllPayoutsAsync();
         return Ok(new
         {
             totalOrdersChecked = orders.Count,
+            totalPayoutsRecorded = payouts.Count,
             discrepanciesFound = 0,
             status = "Reconciled",
             checkedAt = DateTime.UtcNow
@@ -91,6 +143,7 @@ public class FinancialController : ControllerBase
     }
 
     [HttpGet("api/restaurantes/{id}/financeiro")]
+    [Authorize(Roles = "restaurant_owner,restaurant_staff,admin,super_admin")]
     public async Task<IActionResult> GetRestaurantFinancials(Guid id)
     {
         var orders = await _orders.GetAllOrdersAsync();
@@ -108,9 +161,11 @@ public class FinancialController : ControllerBase
     }
 
     [HttpGet("api/entregadores/{id}/financeiro")]
-    public IActionResult GetCourierFinancials(Guid id)
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> GetCourierFinancials(Guid id)
     {
-        var completed = DeliveriesController.Deliveries.Count(d => d.CourierId == id && d.Status == "Delivered");
+        var deliveries = await _deliveries.GetDeliveriesByCourierAsync(id);
+        var completed = deliveries.Count(d => d.Status == "Delivered");
         return Ok(new
         {
             courierId = id,

@@ -1,3 +1,6 @@
+using System.Security.Claims;
+using Marmitas.Application.Common.Interfaces;
+using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -7,32 +10,26 @@ namespace Marmitas.Api.Controllers;
 [ApiController]
 public class CouponsController : ControllerBase
 {
-    private static readonly List<CouponDto> Coupons = new()
-    {
-        new CouponDto
-        {
-            Id = Guid.NewGuid(),
-            Code = "MARMITA10",
-            DiscountPercentage = 10,
-            IsActive = true,
-            ExpiresAt = DateTime.UtcNow.AddMonths(3)
-        }
-    };
+    private readonly ISubscriptionRepository _subscriptions;
 
-    private static readonly List<CouponUsageDto> Usages = new();
+    public CouponsController(ISubscriptionRepository subscriptions)
+    {
+        _subscriptions = subscriptions;
+    }
 
     [HttpGet]
-    [AllowAnonymous]
-    public IActionResult GetAll()
+    [Authorize(Roles = "admin,super_admin")]
+    public async Task<IActionResult> GetAll()
     {
-        return Ok(Coupons);
+        var coupons = await _subscriptions.GetAllCouponsAsync();
+        return Ok(coupons);
     }
 
     [HttpGet("{id}")]
-    [AllowAnonymous]
-    public IActionResult GetById(Guid id)
+    [Authorize(Roles = "admin,super_admin")]
+    public async Task<IActionResult> GetById(Guid id)
     {
-        var coupon = Coupons.FirstOrDefault(c => c.Id == id);
+        var coupon = await _subscriptions.GetCouponByIdAsync(id);
         if (coupon == null)
             throw new Exception("Cupom não encontrado.");
 
@@ -40,30 +37,31 @@ public class CouponsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize]
-    public IActionResult Create([FromBody] SaveCouponRequest request)
+    [Authorize(Roles = "admin,super_admin")]
+    public async Task<IActionResult> Create([FromBody] SaveCouponRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Code))
             throw new Exception("O código do cupom é obrigatório.");
 
-        var coupon = new CouponDto
+        var coupon = new Coupon
         {
-            Id = Guid.NewGuid(),
             Code = request.Code.Trim().ToUpper(),
             DiscountPercentage = request.DiscountPercentage,
             IsActive = true,
             ExpiresAt = request.ExpiresAt ?? DateTime.UtcNow.AddMonths(1)
         };
 
-        Coupons.Add(coupon);
+        await _subscriptions.AddCouponAsync(coupon);
+        await _subscriptions.SaveChangesAsync();
+
         return StatusCode(201, coupon);
     }
 
     [HttpPut("{id}")]
-    [Authorize]
-    public IActionResult Update(Guid id, [FromBody] SaveCouponRequest request)
+    [Authorize(Roles = "admin,super_admin")]
+    public async Task<IActionResult> Update(Guid id, [FromBody] SaveCouponRequest request)
     {
-        var coupon = Coupons.FirstOrDefault(c => c.Id == id);
+        var coupon = await _subscriptions.GetCouponByIdAsync(id);
         if (coupon == null)
             throw new Exception("Cupom não encontrado.");
 
@@ -73,30 +71,45 @@ public class CouponsController : ControllerBase
         if (request.ExpiresAt.HasValue)
             coupon.ExpiresAt = request.ExpiresAt.Value;
 
+        await _subscriptions.SaveChangesAsync();
         return Ok(coupon);
     }
 
     [HttpDelete("{id}")]
-    [Authorize]
-    public IActionResult Delete(Guid id)
+    [Authorize(Roles = "admin,super_admin")]
+    public async Task<IActionResult> Delete(Guid id)
     {
-        var coupon = Coupons.FirstOrDefault(c => c.Id == id);
+        var coupon = await _subscriptions.GetCouponByIdAsync(id);
         if (coupon == null)
             throw new Exception("Cupom não encontrado.");
 
-        Coupons.Remove(coupon);
+        _subscriptions.RemoveCoupon(coupon);
+        await _subscriptions.SaveChangesAsync();
         return NoContent();
     }
 
     [HttpPost("validar")]
-    [Authorize]
-    public IActionResult ValidateCoupon([FromBody] ValidateCouponRequest request)
+    [Authorize(Roles = "customer,admin,super_admin")]
+    public async Task<IActionResult> ValidateCoupon([FromBody] ValidateCouponRequest request)
     {
-        var coupon = Coupons.FirstOrDefault(c =>
-            c.Code.Equals(request.Code?.Trim(), StringComparison.OrdinalIgnoreCase) && c.IsActive);
+        if (string.IsNullOrWhiteSpace(request.Code))
+            throw new Exception("Informe o código do cupom.");
 
+        var coupon = await _subscriptions.GetCouponByCodeAsync(request.Code);
         if (coupon == null || coupon.ExpiresAt < DateTime.UtcNow)
             throw new Exception("Cupom inválido ou expirado.");
+
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (Guid.TryParse(sub, out var userId))
+        {
+            await _subscriptions.AddCouponUsageAsync(new CouponUsage
+            {
+                CouponId = coupon.Id,
+                UserId = userId,
+                UsedAt = DateTime.UtcNow
+            });
+            await _subscriptions.SaveChangesAsync();
+        }
 
         var discount = Math.Round(request.OrderAmount * (coupon.DiscountPercentage / 100m), 2);
         return Ok(new
@@ -111,29 +124,12 @@ public class CouponsController : ControllerBase
     }
 
     [HttpGet("{id}/usos")]
-    [Authorize]
-    public IActionResult GetUsages(Guid id)
+    [Authorize(Roles = "admin,super_admin")]
+    public async Task<IActionResult> GetUsages(Guid id)
     {
-        var list = Usages.Where(u => u.CouponId == id).ToList();
+        var list = await _subscriptions.GetCouponUsagesAsync(id);
         return Ok(list);
     }
-}
-
-public class CouponDto
-{
-    public Guid Id { get; set; }
-    public string Code { get; set; } = string.Empty;
-    public decimal DiscountPercentage { get; set; }
-    public bool IsActive { get; set; }
-    public DateTime ExpiresAt { get; set; }
-}
-
-public class CouponUsageDto
-{
-    public Guid Id { get; set; }
-    public Guid CouponId { get; set; }
-    public Guid UserId { get; set; }
-    public DateTime UsedAt { get; set; }
 }
 
 public class SaveCouponRequest

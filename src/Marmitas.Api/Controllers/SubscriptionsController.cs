@@ -1,4 +1,7 @@
 using System.Security.Claims;
+using Marmitas.Application.Common.Interfaces;
+using Marmitas.Application.Orders;
+using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -6,38 +9,42 @@ namespace Marmitas.Api.Controllers;
 
 [Route("api/assinaturas")]
 [ApiController]
-[Authorize]
+[Authorize(Roles = "customer,admin,super_admin")]
 public class SubscriptionsController : ControllerBase
 {
-    private static readonly List<SubscriptionDto> Subscriptions = new();
+    private readonly ISubscriptionRepository _subscriptions;
+    private readonly ICreateOrderService _orders;
+
+    public SubscriptionsController(ISubscriptionRepository subscriptions, ICreateOrderService orders)
+    {
+        _subscriptions = subscriptions;
+        _orders = orders;
+    }
 
     [HttpGet]
-    public IActionResult GetMySubscriptions()
+    public async Task<IActionResult> GetMySubscriptions()
     {
         var userId = GetUserId();
-        return Ok(Subscriptions.Where(s => s.UserId == userId));
+        var list = await _subscriptions.GetSubscriptionsByUserAsync(userId);
+        return Ok(list);
     }
 
     [HttpGet("{id}")]
-    public IActionResult GetById(Guid id)
+    public async Task<IActionResult> GetById(Guid id)
     {
-        var sub = Subscriptions.FirstOrDefault(s => s.Id == id);
-        if (sub == null)
-            throw new Exception("Assinatura não encontrada.");
-
+        var sub = await GetRequiredAsync(id);
         return Ok(sub);
     }
 
     [HttpPost]
-    public IActionResult Subscribe([FromBody] CreateSubscriptionRequest request)
+    public async Task<IActionResult> Subscribe([FromBody] CreateSubscriptionRequest request)
     {
-        var plan = PlansController.Plans.FirstOrDefault(p => p.Id == request.PlanId);
-        if (plan == null)
+        var plan = await _subscriptions.GetPlanByIdAsync(request.PlanId);
+        if (plan == null || !plan.IsActive)
             throw new Exception("Plano informado não encontrado.");
 
-        var subscription = new SubscriptionDto
+        var subscription = new Subscription
         {
-            Id = Guid.NewGuid(),
             UserId = GetUserId(),
             PlanId = plan.Id,
             PlanName = plan.Name,
@@ -47,69 +54,76 @@ public class SubscriptionsController : ControllerBase
             NextBillingDate = DateTime.UtcNow.AddMonths(1)
         };
 
-        Subscriptions.Add(subscription);
+        await _subscriptions.AddSubscriptionAsync(subscription);
+        await _subscriptions.SaveChangesAsync();
+
         return StatusCode(201, subscription);
     }
 
     [HttpPatch("{id}/pausar")]
-    public IActionResult Pause(Guid id)
+    public async Task<IActionResult> Pause(Guid id)
     {
-        var sub = GetRequired(id);
+        var sub = await GetRequiredAsync(id);
         sub.Status = "Paused";
+        await _subscriptions.SaveChangesAsync();
         return Ok(sub);
     }
 
     [HttpPatch("{id}/reativar")]
-    public IActionResult Reactivate(Guid id)
+    public async Task<IActionResult> Reactivate(Guid id)
     {
-        var sub = GetRequired(id);
+        var sub = await GetRequiredAsync(id);
         sub.Status = "Active";
+        await _subscriptions.SaveChangesAsync();
         return Ok(sub);
     }
 
     [HttpPatch("{id}/renovar")]
-    public IActionResult Renew(Guid id)
+    public async Task<IActionResult> Renew(Guid id)
     {
-        var sub = GetRequired(id);
+        var sub = await GetRequiredAsync(id);
         sub.Status = "Active";
         sub.NextBillingDate = DateTime.UtcNow.AddMonths(1);
+        await _subscriptions.SaveChangesAsync();
         return Ok(sub);
     }
 
     [HttpPatch("{id}/cancelar")]
-    public IActionResult Cancel(Guid id)
+    public async Task<IActionResult> Cancel(Guid id)
     {
-        var sub = GetRequired(id);
+        var sub = await GetRequiredAsync(id);
         sub.Status = "Cancelled";
+        await _subscriptions.SaveChangesAsync();
         return Ok(sub);
     }
 
     [HttpGet("{id}/pedidos")]
-    public IActionResult GetSubscriptionOrders(Guid id)
+    public async Task<IActionResult> GetSubscriptionOrders(Guid id)
     {
-        var sub = GetRequired(id);
-        return Ok(new { subscriptionId = sub.Id, orders = Array.Empty<object>() });
+        var sub = await GetRequiredAsync(id);
+        var userOrders = await _orders.GetMyOrdersAsync(sub.UserId);
+        return Ok(new { subscriptionId = sub.Id, orders = userOrders });
     }
 
     [HttpGet("{id}/pagamentos")]
-    public IActionResult GetSubscriptionPayments(Guid id)
+    public async Task<IActionResult> GetSubscriptionPayments(Guid id)
     {
-        var sub = GetRequired(id);
+        var sub = await GetRequiredAsync(id);
         return Ok(new[]
         {
             new
             {
                 subscriptionId = sub.Id,
                 amount = sub.MonthlyPrice,
-                status = "Paid",
+                status = sub.Status == "Cancelled" ? "Cancelled" : "Paid",
                 paidAt = sub.StartDate
             }
         });
     }
 
-    private static SubscriptionDto GetRequired(Guid id)
+    private async Task<Subscription> GetRequiredAsync(Guid id)
     {
-        var sub = Subscriptions.FirstOrDefault(s => s.Id == id);
+        var sub = await _subscriptions.GetSubscriptionByIdAsync(id);
         if (sub == null)
             throw new Exception("Assinatura não encontrada.");
         return sub;
@@ -120,18 +134,6 @@ public class SubscriptionsController : ControllerBase
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         return Guid.TryParse(sub, out var id) ? id : Guid.Empty;
     }
-}
-
-public class SubscriptionDto
-{
-    public Guid Id { get; set; }
-    public Guid UserId { get; set; }
-    public Guid PlanId { get; set; }
-    public string PlanName { get; set; } = string.Empty;
-    public decimal MonthlyPrice { get; set; }
-    public string Status { get; set; } = string.Empty;
-    public DateTime StartDate { get; set; }
-    public DateTime NextBillingDate { get; set; }
 }
 
 public class CreateSubscriptionRequest

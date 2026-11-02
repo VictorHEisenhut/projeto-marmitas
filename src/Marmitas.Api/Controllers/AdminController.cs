@@ -10,21 +10,24 @@ namespace Marmitas.Api.Controllers;
 
 [Route("api/admin")]
 [ApiController]
-[Authorize]
+[Authorize(Roles = "admin,super_admin")]
 public class AdminController : ControllerBase
 {
     private readonly IUserRepository _users;
     private readonly IRestaurantQueryService _restaurants;
     private readonly ICreateOrderService _orders;
+    private readonly ISubscriptionRepository _subscriptions;
 
     public AdminController(
         IUserRepository users,
         IRestaurantQueryService restaurants,
-        ICreateOrderService orders)
+        ICreateOrderService orders,
+        ISubscriptionRepository subscriptions)
     {
         _users = users;
         _restaurants = restaurants;
         _orders = orders;
+        _subscriptions = subscriptions;
     }
 
     [HttpGet("relatorios/vendas")]
@@ -40,13 +43,17 @@ public class AdminController : ControllerBase
     }
 
     [HttpGet("relatorios/assinaturas")]
-    public IActionResult GetSubscriptionsReports()
+    public async Task<IActionResult> GetSubscriptionsReports()
     {
+        var subscriptions = await _subscriptions.GetAllSubscriptionsAsync();
+        var active = subscriptions.Where(s => s.Status == "Active").ToList();
+
         return Ok(new
         {
-            totalActiveSubscriptions = 0,
-            monthlyRecurringRevenue = 0m,
-            subscriptions = Array.Empty<object>()
+            totalActiveSubscriptions = active.Count,
+            totalCancelledSubscriptions = subscriptions.Count(s => s.Status == "Cancelled"),
+            monthlyRecurringRevenue = active.Sum(s => s.MonthlyPrice),
+            subscriptions
         });
     }
 

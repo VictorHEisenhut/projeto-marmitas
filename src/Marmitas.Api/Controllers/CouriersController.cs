@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using Marmitas.Application.Common.Interfaces;
+using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,43 +10,50 @@ namespace Marmitas.Api.Controllers;
 [ApiController]
 public class CouriersController : ControllerBase
 {
-    public static readonly List<CourierDto> Couriers = new();
-    private static readonly List<CourierDocumentDto> Documents = new();
-    private static readonly List<CourierVehicleDto> Vehicles = new();
+    private readonly IDeliveryRepository _deliveries;
+
+    public CouriersController(IDeliveryRepository deliveries)
+    {
+        _deliveries = deliveries;
+    }
 
     [HttpPost("registro")]
     [AllowAnonymous]
-    public IActionResult Register([FromBody] RegisterCourierRequest request)
+    public async Task<IActionResult> Register([FromBody] RegisterCourierRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
             throw new Exception("O nome do entregador é obrigatório.");
 
-        var courier = new CourierDto
+        var userId = GetUserIdOrNull();
+        var courier = new Courier
         {
-            Id = Guid.NewGuid(),
+            UserId = userId,
             Name = request.Name.Trim(),
             Document = request.Document ?? string.Empty,
             Phone = request.Phone ?? string.Empty,
-            Status = "Approved",
+            Status = "Pending",
             IsAvailable = true
         };
 
-        Couriers.Add(courier);
+        await _deliveries.AddCourierAsync(courier);
+        await _deliveries.SaveChangesAsync();
+
         return StatusCode(201, courier);
     }
 
     [HttpGet]
-    [Authorize]
-    public IActionResult GetAll()
+    [Authorize(Roles = "admin,super_admin")]
+    public async Task<IActionResult> GetAll()
     {
-        return Ok(Couriers);
+        var list = await _deliveries.GetAllCouriersAsync();
+        return Ok(list);
     }
 
     [HttpGet("{id}")]
-    [Authorize]
-    public IActionResult GetById(Guid id)
+    [Authorize(Roles = "admin,super_admin")]
+    public async Task<IActionResult> GetById(Guid id)
     {
-        var courier = Couriers.FirstOrDefault(c => c.Id == id);
+        var courier = await _deliveries.GetCourierByIdAsync(id);
         if (courier == null)
             throw new Exception("Entregador não encontrado.");
 
@@ -52,100 +61,113 @@ public class CouriersController : ControllerBase
     }
 
     [HttpPatch("{id}/aprovar")]
-    [Authorize]
-    public IActionResult Approve(Guid id)
+    [Authorize(Roles = "admin,super_admin")]
+    public async Task<IActionResult> Approve(Guid id)
     {
-        var courier = Couriers.FirstOrDefault(c => c.Id == id);
+        var courier = await _deliveries.GetCourierByIdAsync(id);
         if (courier == null)
             throw new Exception("Entregador não encontrado.");
 
         courier.Status = "Approved";
+        await _deliveries.SaveChangesAsync();
         return Ok(courier);
     }
 
     [HttpPatch("{id}/status")]
-    [Authorize]
-    public IActionResult ChangeStatus(Guid id, [FromBody] UpdateCourierStatusRequest request)
+    [Authorize(Roles = "admin,super_admin")]
+    public async Task<IActionResult> ChangeStatus(Guid id, [FromBody] UpdateCourierStatusRequest request)
     {
-        var courier = Couriers.FirstOrDefault(c => c.Id == id);
+        var courier = await _deliveries.GetCourierByIdAsync(id);
         if (courier == null)
             throw new Exception("Entregador não encontrado.");
 
         courier.Status = request.Status;
+        await _deliveries.SaveChangesAsync();
         return Ok(courier);
     }
 
     [HttpGet("me/documentos")]
-    [Authorize]
-    public IActionResult GetMyDocuments()
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> GetMyDocuments()
     {
-        var userId = GetUserId();
-        return Ok(Documents.Where(d => d.CourierId == userId));
+        var list = await _deliveries.GetDocumentsByCourierAsync(GetUserId());
+        return Ok(list);
     }
 
     [HttpPost("me/documentos")]
-    [Authorize]
-    public IActionResult UploadDocument([FromBody] SaveCourierDocumentRequest request)
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> UploadDocument([FromBody] SaveCourierDocumentRequest request)
     {
-        var doc = new CourierDocumentDto
+        var doc = new CourierDocument
         {
-            Id = Guid.NewGuid(),
             CourierId = GetUserId(),
             Type = request.Type,
             Number = request.Number,
             Status = "Verified"
         };
 
-        Documents.Add(doc);
+        await _deliveries.AddDocumentAsync(doc);
+        await _deliveries.SaveChangesAsync();
         return StatusCode(201, doc);
     }
 
     [HttpGet("me/veiculos")]
-    [Authorize]
-    public IActionResult GetMyVehicles()
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> GetMyVehicles()
     {
-        var userId = GetUserId();
-        return Ok(Vehicles.Where(v => v.CourierId == userId));
+        var list = await _deliveries.GetVehiclesByCourierAsync(GetUserId());
+        return Ok(list);
     }
 
     [HttpPost("me/veiculos")]
-    [Authorize]
-    public IActionResult AddVehicle([FromBody] SaveCourierVehicleRequest request)
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> AddVehicle([FromBody] SaveCourierVehicleRequest request)
     {
-        var vehicle = new CourierVehicleDto
+        var vehicle = new CourierVehicle
         {
-            Id = Guid.NewGuid(),
             CourierId = GetUserId(),
             Type = request.Type,
             Model = request.Model,
             LicensePlate = request.LicensePlate
         };
 
-        Vehicles.Add(vehicle);
+        await _deliveries.AddVehicleAsync(vehicle);
+        await _deliveries.SaveChangesAsync();
         return StatusCode(201, vehicle);
     }
 
     [HttpPut("me/veiculos/{id}")]
-    [Authorize]
-    public IActionResult UpdateVehicle(Guid id, [FromBody] SaveCourierVehicleRequest request)
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> UpdateVehicle(Guid id, [FromBody] SaveCourierVehicleRequest request)
     {
-        var vehicle = Vehicles.FirstOrDefault(v => v.Id == id);
+        var vehicle = await _deliveries.GetVehicleByIdAsync(id);
         if (vehicle == null)
             throw new Exception("Veículo não encontrado.");
 
         vehicle.Type = request.Type;
         vehicle.Model = request.Model;
         vehicle.LicensePlate = request.LicensePlate;
+
+        await _deliveries.SaveChangesAsync();
         return Ok(vehicle);
     }
 
     [HttpPatch("me/localizacao")]
-    [Authorize]
-    public IActionResult UpdateLocation([FromBody] UpdateLocationRequest request)
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> UpdateLocation([FromBody] UpdateLocationRequest request)
     {
+        var userId = GetUserId();
+        var courier = await _deliveries.GetCourierByUserIdAsync(userId);
+        if (courier != null)
+        {
+            courier.Latitude = request.Latitude;
+            courier.Longitude = request.Longitude;
+            await _deliveries.SaveChangesAsync();
+        }
+
         return Ok(new
         {
-            courierId = GetUserId(),
+            courierId = userId,
             latitude = request.Latitude,
             longitude = request.Longitude,
             updatedAt = DateTime.UtcNow
@@ -153,25 +175,29 @@ public class CouriersController : ControllerBase
     }
 
     [HttpGet("me/entregas")]
-    [Authorize]
-    public IActionResult GetMyDeliveries()
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> GetMyDeliveries()
     {
-        return Ok(DeliveriesController.Deliveries.Where(d => d.CourierId == GetUserId()));
+        var list = await _deliveries.GetDeliveriesByCourierAsync(GetUserId());
+        return Ok(list);
     }
 
     [HttpGet("{id}/historico")]
-    [Authorize]
-    public IActionResult GetDeliveryHistory(Guid id)
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> GetDeliveryHistory(Guid id)
     {
-        return Ok(DeliveriesController.Deliveries.Where(d => d.CourierId == id));
+        var list = await _deliveries.GetDeliveriesByCourierAsync(id);
+        return Ok(list);
     }
 
     [HttpGet("me/ganhos")]
-    [Authorize]
-    public IActionResult GetMyEarnings()
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> GetMyEarnings()
     {
         var userId = GetUserId();
-        var count = DeliveriesController.Deliveries.Count(d => d.CourierId == userId && d.Status == "Delivered");
+        var deliveries = await _deliveries.GetDeliveriesByCourierAsync(userId);
+        var count = deliveries.Count(d => d.Status == "Delivered");
+
         return Ok(new
         {
             courierId = userId,
@@ -182,19 +208,14 @@ public class CouriersController : ControllerBase
 
     private Guid GetUserId()
     {
-        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
-        return Guid.TryParse(sub, out var id) ? id : Guid.Empty;
+        return GetUserIdOrNull() ?? Guid.Empty;
     }
-}
 
-public class CourierDto
-{
-    public Guid Id { get; set; }
-    public string Name { get; set; } = string.Empty;
-    public string Document { get; set; } = string.Empty;
-    public string Phone { get; set; } = string.Empty;
-    public string Status { get; set; } = string.Empty;
-    public bool IsAvailable { get; set; }
+    private Guid? GetUserIdOrNull()
+    {
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        return Guid.TryParse(sub, out var id) ? id : null;
+    }
 }
 
 public class RegisterCourierRequest
@@ -209,28 +230,10 @@ public class UpdateCourierStatusRequest
     public string Status { get; set; } = string.Empty;
 }
 
-public class CourierDocumentDto
-{
-    public Guid Id { get; set; }
-    public Guid CourierId { get; set; }
-    public string Type { get; set; } = string.Empty;
-    public string Number { get; set; } = string.Empty;
-    public string Status { get; set; } = string.Empty;
-}
-
 public class SaveCourierDocumentRequest
 {
     public string Type { get; set; } = "CNH";
     public string Number { get; set; } = string.Empty;
-}
-
-public class CourierVehicleDto
-{
-    public Guid Id { get; set; }
-    public Guid CourierId { get; set; }
-    public string Type { get; set; } = string.Empty;
-    public string Model { get; set; } = string.Empty;
-    public string LicensePlate { get; set; } = string.Empty;
 }
 
 public class SaveCourierVehicleRequest

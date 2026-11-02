@@ -8,7 +8,6 @@ namespace Marmitas.Api.Controllers;
 
 [Route("api/pedidos")]
 [ApiController]
-[Authorize]
 public class OrdersController : ControllerBase
 {
     private readonly ICreateOrderService _createOrderService;
@@ -19,6 +18,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Roles = "customer,admin,super_admin")]
     public async Task<IActionResult> GetMyOrders()
     {
         var subClaim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
@@ -30,6 +30,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpGet("{id}")]
+    [Authorize(Roles = "customer,admin,super_admin")]
     public async Task<IActionResult> GetById(Guid id)
     {
         var order = await _createOrderService.GetByIdAsync(id);
@@ -37,6 +38,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = "customer,admin,super_admin")]
     public async Task<IActionResult> CreateOrder([FromBody] CreateOrderRequest request)
     {
         var subClaim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
@@ -48,6 +50,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPatch("{id}/cancelar")]
+    [Authorize(Roles = "customer,admin,super_admin")]
     public async Task<IActionResult> Cancel(Guid id)
     {
         var order = await _createOrderService.CancelAsync(id);
@@ -55,6 +58,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpGet("{id}/itens")]
+    [Authorize(Roles = "customer,admin,super_admin")]
     public async Task<IActionResult> GetItems(Guid id)
     {
         var items = await _createOrderService.GetItemsAsync(id);
@@ -62,6 +66,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpGet("{id}/historico-status")]
+    [Authorize(Roles = "customer,admin,super_admin")]
     public async Task<IActionResult> GetStatusHistory(Guid id)
     {
         var order = await _createOrderService.GetByIdAsync(id);
@@ -75,6 +80,7 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{id}/historico-status")]
+    [Authorize(Roles = "admin,super_admin,restaurant_owner,restaurant_staff,driver")]
     public async Task<IActionResult> AddStatusHistory(Guid id, [FromBody] UpdateOrderStatusRequest request)
     {
         var order = await _createOrderService.UpdateStatusAsync(id, request.Status);

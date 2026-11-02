@@ -22,6 +22,25 @@ public class AppDbContext : DbContext
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
 
+    public DbSet<Address> Addresses => Set<Address>();
+    public DbSet<Favorite> Favorites => Set<Favorite>();
+    public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<NotificationPreference> NotificationPreferences => Set<NotificationPreference>();
+
+    public DbSet<Coupon> Coupons => Set<Coupon>();
+    public DbSet<CouponUsage> CouponUsages => Set<CouponUsage>();
+    public DbSet<Plan> Plans => Set<Plan>();
+    public DbSet<Subscription> Subscriptions => Set<Subscription>();
+
+    public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<Payout> Payouts => Set<Payout>();
+    public DbSet<Review> Reviews => Set<Review>();
+
+    public DbSet<Courier> Couriers => Set<Courier>();
+    public DbSet<CourierDocument> CourierDocuments => Set<CourierDocument>();
+    public DbSet<CourierVehicle> CourierVehicles => Set<CourierVehicle>();
+    public DbSet<Delivery> Deliveries => Set<Delivery>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<UserRole>().HasKey(ur => new { ur.UserId, ur.RoleId });

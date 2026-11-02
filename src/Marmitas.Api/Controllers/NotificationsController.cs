@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using Marmitas.Application.Common.Interfaces;
+using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,77 +10,100 @@ namespace Marmitas.Api.Controllers;
 [Authorize]
 public class NotificationsController : ControllerBase
 {
-    private static readonly List<NotificationDto> Notifications = new();
-    private static NotificationPreferencesDto Preferences = new()
+    private readonly ICustomerProfileRepository _profiles;
+
+    public NotificationsController(ICustomerProfileRepository profiles)
     {
-        EmailEnabled = true,
-        PushEnabled = true,
-        SmsEnabled = false
-    };
+        _profiles = profiles;
+    }
 
     [HttpGet("api/notificacoes")]
-    public IActionResult GetMyNotifications()
+    public async Task<IActionResult> GetMyNotifications()
     {
         var userId = GetUserId();
-        if (!Notifications.Any(n => n.UserId == userId))
-        {
-            Notifications.Add(new NotificationDto
-            {
-                Id = Guid.NewGuid(),
-                UserId = userId,
-                Title = "Bem-vindo ao Marmitas!",
-                Message = "Sua conta está pronta para realizar pedidos.",
-                IsRead = false,
-                CreatedAt = DateTime.UtcNow
-            });
-        }
-
-        return Ok(Notifications.Where(n => n.UserId == userId));
+        var list = await _profiles.GetNotificationsByUserAsync(userId);
+        return Ok(list);
     }
 
     [HttpPatch("api/notificacoes/{id}/lida")]
-    public IActionResult MarkAsRead(Guid id)
+    public async Task<IActionResult> MarkAsRead(Guid id)
     {
-        var notif = Notifications.FirstOrDefault(n => n.Id == id);
+        var notif = await _profiles.GetNotificationByIdAsync(id);
         if (notif == null)
             throw new Exception("Notificação não encontrada.");
 
         notif.IsRead = true;
+        await _profiles.SaveChangesAsync();
         return Ok(notif);
     }
 
     [HttpPatch("api/notificacoes/marcar-todas-lidas")]
-    public IActionResult MarkAllAsRead()
+    public async Task<IActionResult> MarkAllAsRead()
     {
         var userId = GetUserId();
-        foreach (var n in Notifications.Where(n => n.UserId == userId))
+        var list = await _profiles.GetNotificationsByUserAsync(userId);
+        foreach (var n in list)
             n.IsRead = true;
 
+        await _profiles.SaveChangesAsync();
         return Ok(new { message = "Todas as notificações foram marcadas como lidas." });
     }
 
     [HttpDelete("api/notificacoes/{id}")]
-    public IActionResult DeleteNotification(Guid id)
+    public async Task<IActionResult> DeleteNotification(Guid id)
     {
-        var notif = Notifications.FirstOrDefault(n => n.Id == id);
+        var notif = await _profiles.GetNotificationByIdAsync(id);
         if (notif == null)
             throw new Exception("Notificação não encontrada.");
 
-        Notifications.Remove(notif);
+        _profiles.RemoveNotification(notif);
+        await _profiles.SaveChangesAsync();
         return NoContent();
     }
 
     [HttpGet("api/usuarios/me/preferencias-notificacao")]
-    public IActionResult GetPreferences()
+    public async Task<IActionResult> GetPreferences()
     {
-        return Ok(Preferences);
+        var userId = GetUserId();
+        var prefs = await _profiles.GetPreferencesByUserAsync(userId);
+        if (prefs == null)
+        {
+            prefs = new NotificationPreference
+            {
+                UserId = userId,
+                EmailEnabled = true,
+                PushEnabled = true,
+                SmsEnabled = false
+            };
+            await _profiles.AddPreferencesAsync(prefs);
+            await _profiles.SaveChangesAsync();
+        }
+
+        return Ok(new NotificationPreferencesDto
+        {
+            EmailEnabled = prefs.EmailEnabled,
+            PushEnabled = prefs.PushEnabled,
+            SmsEnabled = prefs.SmsEnabled
+        });
     }
 
     [HttpPut("api/usuarios/me/preferencias-notificacao")]
-    public IActionResult UpdatePreferences([FromBody] NotificationPreferencesDto request)
+    public async Task<IActionResult> UpdatePreferences([FromBody] NotificationPreferencesDto request)
     {
-        Preferences = request;
-        return Ok(Preferences);
+        var userId = GetUserId();
+        var prefs = await _profiles.GetPreferencesByUserAsync(userId);
+        if (prefs == null)
+        {
+            prefs = new NotificationPreference { UserId = userId };
+            await _profiles.AddPreferencesAsync(prefs);
+        }
+
+        prefs.EmailEnabled = request.EmailEnabled;
+        prefs.PushEnabled = request.PushEnabled;
+        prefs.SmsEnabled = request.SmsEnabled;
+
+        await _profiles.SaveChangesAsync();
+        return Ok(request);
     }
 
     private Guid GetUserId()
@@ -86,16 +111,6 @@ public class NotificationsController : ControllerBase
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         return Guid.TryParse(sub, out var id) ? id : Guid.Empty;
     }
-}
-
-public class NotificationDto
-{
-    public Guid Id { get; set; }
-    public Guid UserId { get; set; }
-    public string Title { get; set; } = string.Empty;
-    public string Message { get; set; } = string.Empty;
-    public bool IsRead { get; set; }
-    public DateTime CreatedAt { get; set; }
 }
 
 public class NotificationPreferencesDto

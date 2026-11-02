@@ -32,7 +32,7 @@ public class MarmitasController : ControllerBase
     }
 
     [HttpPost("api/restaurantes/{id}/marmitas")]
-    [Authorize]
+    [Authorize(Roles = "admin,super_admin,restaurant_owner,restaurant_staff")]
     public async Task<IActionResult> AddToMenu(Guid id, [FromBody] CreateProductRequest request)
     {
         var result = await _restaurantQueryService.CreateProductAsync(id, request);
@@ -40,7 +40,7 @@ public class MarmitasController : ControllerBase
     }
 
     [HttpPut("api/marmitas/{id}")]
-    [Authorize]
+    [Authorize(Roles = "admin,super_admin,restaurant_owner,restaurant_staff")]
     public async Task<IActionResult> Update(Guid id, [FromBody] CreateProductRequest request)
     {
         var result = await _restaurantQueryService.UpdateProductAsync(id, request);
@@ -48,7 +48,7 @@ public class MarmitasController : ControllerBase
     }
 
     [HttpPatch("api/marmitas/{id}/disponibilidade")]
-    [Authorize]
+    [Authorize(Roles = "admin,super_admin,restaurant_owner,restaurant_staff")]
     public async Task<IActionResult> ChangeAvailability(Guid id, [FromBody] UpdateProductAvailabilityRequest request)
     {
         var result = await _restaurantQueryService.ChangeProductAvailabilityAsync(id, request.IsActive);
@@ -56,7 +56,7 @@ public class MarmitasController : ControllerBase
     }
 
     [HttpDelete("api/marmitas/{id}")]
-    [Authorize]
+    [Authorize(Roles = "admin,super_admin,restaurant_owner,restaurant_staff")]
     public async Task<IActionResult> Delete(Guid id)
     {
         await _restaurantQueryService.DeleteProductAsync(id);
@@ -73,7 +73,7 @@ public class MarmitasController : ControllerBase
     }
 
     [HttpPost("api/marmitas/{id}/opcoes")]
-    [Authorize]
+    [Authorize(Roles = "admin,super_admin,restaurant_owner,restaurant_staff")]
     public async Task<IActionResult> AddOption(Guid id, [FromBody] SaveProductOptionRequest request)
     {
         await _restaurantQueryService.GetProductByIdAsync(id);
@@ -93,7 +93,7 @@ public class MarmitasController : ControllerBase
     }
 
     [HttpPut("api/marmitas/opcoes/{id}")]
-    [Authorize]
+    [Authorize(Roles = "admin,super_admin,restaurant_owner,restaurant_staff")]
     public IActionResult UpdateOption(Guid id, [FromBody] SaveProductOptionRequest request)
     {
         var option = Options.FirstOrDefault(o => o.Id == id);
@@ -108,7 +108,7 @@ public class MarmitasController : ControllerBase
     }
 
     [HttpDelete("api/marmitas/opcoes/{id}")]
-    [Authorize]
+    [Authorize(Roles = "admin,super_admin,restaurant_owner,restaurant_staff")]
     public IActionResult DeleteOption(Guid id)
     {
         var option = Options.FirstOrDefault(o => o.Id == id);

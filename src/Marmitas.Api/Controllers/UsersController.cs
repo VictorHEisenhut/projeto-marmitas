@@ -66,6 +66,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> GetAll()
     {
         var users = await _users.GetAllAsync();
@@ -73,6 +74,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpGet("{id}")]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> GetById(Guid id)
     {
         var user = await _users.GetByIdAsync(id);
@@ -82,6 +84,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPut("{id}")]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateUserRequest request)
     {
         var user = await _users.GetByIdAsync(id);
@@ -96,6 +99,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPatch("{id}/status")]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> ChangeStatus(Guid id, [FromBody] UpdateUserStatusRequest request)
     {
         var user = await _users.GetByIdAsync(id);
@@ -110,6 +114,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpDelete("{id}")]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> Delete(Guid id)
     {
         var user = await _users.GetByIdAsync(id);
@@ -123,6 +128,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPatch("{id}/roles")]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> AssignRoles(Guid id, [FromBody] AssignRolesRequest request)
     {
         var user = await _users.GetByIdAsync(id);

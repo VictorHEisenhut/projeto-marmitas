@@ -9,7 +9,6 @@ namespace Marmitas.Api.Controllers;
 
 [Route("api/auth")]
 [ApiController]
-[AllowAnonymous]
 public class AuthController : ControllerBase
 {
     private readonly IRegisterUserService _registerUser;
@@ -33,6 +32,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("registro")]
+    [AllowAnonymous]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
         var result = await _registerUser.ExecuteAsync(request);
@@ -40,6 +40,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("login")]
+    [AllowAnonymous]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
         var result = await _login.ExecuteAsync(request);
@@ -47,12 +48,14 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("logout")]
+    [Authorize]
     public IActionResult Logout()
     {
         return Ok(new { message = "Logout realizado com sucesso." });
     }
 
     [HttpPost("refresh-token")]
+    [Authorize]
     public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest? request)
     {
         var subClaim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
@@ -80,6 +83,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("esqueci-senha")]
+    [AllowAnonymous]
     public async Task<IActionResult> EsqueciSenha([FromBody] ForgotPasswordRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Email))
@@ -97,6 +101,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("redefinir-senha")]
+    [AllowAnonymous]
     public async Task<IActionResult> RedefinirSenha([FromBody] ResetPasswordRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Email))

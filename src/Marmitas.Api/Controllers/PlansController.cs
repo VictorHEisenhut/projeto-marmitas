@@ -1,3 +1,5 @@
+using Marmitas.Application.Common.Interfaces;
+using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -7,31 +9,26 @@ namespace Marmitas.Api.Controllers;
 [ApiController]
 public class PlansController : ControllerBase
 {
-    public static readonly List<PlanDto> Plans = new()
+    private readonly ISubscriptionRepository _subscriptions;
+
+    public PlansController(ISubscriptionRepository subscriptions)
     {
-        new PlanDto
-        {
-            Id = Guid.NewGuid(),
-            Name = "Plano Semanal 5 Marmitas",
-            Description = "Receba 1 marmita por dia útil da semana",
-            MealsPerWeek = 5,
-            MonthlyPrice = 399.90m,
-            IsActive = true
-        }
-    };
+        _subscriptions = subscriptions;
+    }
 
     [HttpGet]
     [AllowAnonymous]
-    public IActionResult GetAll()
+    public async Task<IActionResult> GetAll()
     {
-        return Ok(Plans.Where(p => p.IsActive));
+        var plans = await _subscriptions.GetActivePlansAsync();
+        return Ok(plans);
     }
 
     [HttpGet("{id}")]
     [AllowAnonymous]
-    public IActionResult GetById(Guid id)
+    public async Task<IActionResult> GetById(Guid id)
     {
-        var plan = Plans.FirstOrDefault(p => p.Id == id);
+        var plan = await _subscriptions.GetPlanByIdAsync(id);
         if (plan == null)
             throw new Exception("Plano não encontrado.");
 
@@ -39,15 +36,14 @@ public class PlansController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize]
-    public IActionResult Create([FromBody] SavePlanRequest request)
+    [Authorize(Roles = "admin,super_admin")]
+    public async Task<IActionResult> Create([FromBody] SavePlanRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
             throw new Exception("O nome do plano é obrigatório.");
 
-        var plan = new PlanDto
+        var plan = new Plan
         {
-            Id = Guid.NewGuid(),
             Name = request.Name.Trim(),
             Description = request.Description ?? string.Empty,
             MealsPerWeek = request.MealsPerWeek,
@@ -55,15 +51,17 @@ public class PlansController : ControllerBase
             IsActive = true
         };
 
-        Plans.Add(plan);
+        await _subscriptions.AddPlanAsync(plan);
+        await _subscriptions.SaveChangesAsync();
+
         return StatusCode(201, plan);
     }
 
     [HttpPut("{id}")]
-    [Authorize]
-    public IActionResult Update(Guid id, [FromBody] SavePlanRequest request)
+    [Authorize(Roles = "admin,super_admin")]
+    public async Task<IActionResult> Update(Guid id, [FromBody] SavePlanRequest request)
     {
-        var plan = Plans.FirstOrDefault(p => p.Id == id);
+        var plan = await _subscriptions.GetPlanByIdAsync(id);
         if (plan == null)
             throw new Exception("Plano não encontrado.");
 
@@ -73,30 +71,22 @@ public class PlansController : ControllerBase
         plan.MealsPerWeek = request.MealsPerWeek;
         plan.MonthlyPrice = request.MonthlyPrice;
 
+        await _subscriptions.SaveChangesAsync();
         return Ok(plan);
     }
 
     [HttpDelete("{id}")]
-    [Authorize]
-    public IActionResult Delete(Guid id)
+    [Authorize(Roles = "admin,super_admin")]
+    public async Task<IActionResult> Delete(Guid id)
     {
-        var plan = Plans.FirstOrDefault(p => p.Id == id);
+        var plan = await _subscriptions.GetPlanByIdAsync(id);
         if (plan == null)
             throw new Exception("Plano não encontrado.");
 
         plan.IsActive = false;
+        await _subscriptions.SaveChangesAsync();
         return NoContent();
     }
-}
-
-public class PlanDto
-{
-    public Guid Id { get; set; }
-    public string Name { get; set; } = string.Empty;
-    public string Description { get; set; } = string.Empty;
-    public int MealsPerWeek { get; set; }
-    public decimal MonthlyPrice { get; set; }
-    public bool IsActive { get; set; }
 }
 
 public class SavePlanRequest

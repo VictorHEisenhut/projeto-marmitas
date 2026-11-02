@@ -1,128 +1,153 @@
 using System.Security.Claims;
+using Marmitas.Application.Common.Interfaces;
 using Marmitas.Application.Orders;
+using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Marmitas.Api.Controllers;
 
 [ApiController]
-[Authorize]
 public class DeliveriesController : ControllerBase
 {
-    public static readonly List<DeliveryDto> Deliveries = new();
+    private readonly IDeliveryRepository _deliveries;
     private readonly ICreateOrderService _orders;
 
-    public DeliveriesController(ICreateOrderService orders)
+    public DeliveriesController(IDeliveryRepository deliveries, ICreateOrderService orders)
     {
+        _deliveries = deliveries;
         _orders = orders;
     }
 
     [HttpGet("api/entregas")]
+    [Authorize(Roles = "driver,admin,super_admin")]
     public async Task<IActionResult> GetDeliveries()
     {
         var allOrders = await _orders.GetAllOrdersAsync();
+        var existing = await _deliveries.GetAllDeliveriesAsync();
+        var changed = false;
+
         foreach (var order in allOrders)
         {
-            if (!Deliveries.Any(d => d.OrderId == order.Id))
+            if (!existing.Any(d => d.OrderId == order.Id))
             {
-                Deliveries.Add(new DeliveryDto
+                await _deliveries.AddDeliveryAsync(new Delivery
                 {
-                    Id = order.Id,
                     OrderId = order.Id,
-                    Status = order.Status,
-                    UpdatedAt = order.UpdatedAt
+                    Status = order.Status
                 });
+                changed = true;
             }
         }
 
-        return Ok(Deliveries);
+        if (changed)
+            await _deliveries.SaveChangesAsync();
+
+        var updatedList = await _deliveries.GetAllDeliveriesAsync();
+        return Ok(updatedList);
     }
 
     [HttpGet("api/entregas/{id}")]
-    public IActionResult GetDelivery(Guid id)
+    [Authorize(Roles = "customer,driver,admin,super_admin")]
+    public async Task<IActionResult> GetDelivery(Guid id)
     {
-        var delivery = Deliveries.FirstOrDefault(d => d.Id == id || d.OrderId == id);
+        var delivery = await _deliveries.GetDeliveryByIdOrOrderAsync(id);
         if (delivery == null)
         {
-            delivery = new DeliveryDto
+            var order = await _orders.GetByIdAsync(id);
+            delivery = new Delivery
             {
-                Id = id,
-                OrderId = id,
-                Status = "ReadyForPickup",
-                UpdatedAt = DateTime.UtcNow
+                OrderId = order.Id,
+                Status = order.Status
             };
-            Deliveries.Add(delivery);
+            await _deliveries.AddDeliveryAsync(delivery);
+            await _deliveries.SaveChangesAsync();
         }
 
         return Ok(delivery);
     }
 
     [HttpPatch("api/entregas/{id}/aceitar")]
-    public IActionResult AcceptDelivery(Guid id)
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> AcceptDelivery(Guid id)
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         var courierId = Guid.TryParse(sub, out var parsed) ? parsed : Guid.Empty;
 
-        var delivery = Deliveries.FirstOrDefault(d => d.Id == id || d.OrderId == id);
+        var delivery = await _deliveries.GetDeliveryByIdOrOrderAsync(id);
         if (delivery == null)
         {
-            delivery = new DeliveryDto { Id = id, OrderId = id };
-            Deliveries.Add(delivery);
+            var order = await _orders.GetByIdAsync(id);
+            delivery = new Delivery { OrderId = order.Id };
+            await _deliveries.AddDeliveryAsync(delivery);
         }
 
         delivery.CourierId = courierId;
         delivery.Status = "DriverAssigned";
-        delivery.UpdatedAt = DateTime.UtcNow;
+        await _deliveries.SaveChangesAsync();
 
         return Ok(delivery);
     }
 
     [HttpPatch("api/entregas/{id}/status")]
-    public IActionResult UpdateStatus(Guid id, [FromBody] UpdateDeliveryStatusRequest request)
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> UpdateStatus(Guid id, [FromBody] UpdateDeliveryStatusRequest request)
     {
-        var delivery = Deliveries.FirstOrDefault(d => d.Id == id || d.OrderId == id);
+        var delivery = await _deliveries.GetDeliveryByIdOrOrderAsync(id);
         if (delivery == null)
         {
-            delivery = new DeliveryDto { Id = id, OrderId = id };
-            Deliveries.Add(delivery);
+            var order = await _orders.GetByIdAsync(id);
+            delivery = new Delivery { OrderId = order.Id };
+            await _deliveries.AddDeliveryAsync(delivery);
         }
 
         delivery.Status = request.Status;
-        delivery.UpdatedAt = DateTime.UtcNow;
+        await _deliveries.SaveChangesAsync();
 
         return Ok(delivery);
     }
 
     [HttpGet("api/entregas/{id}/rastreamento")]
-    public IActionResult TrackDelivery(Guid id)
+    [Authorize(Roles = "customer,admin,super_admin")]
+    public async Task<IActionResult> TrackDelivery(Guid id)
     {
-        var delivery = Deliveries.FirstOrDefault(d => d.Id == id || d.OrderId == id);
+        var delivery = await _deliveries.GetDeliveryByIdOrOrderAsync(id);
+        Courier? courier = null;
+        if (delivery?.CourierId != null)
+            courier = await _deliveries.GetCourierByUserIdAsync(delivery.CourierId.Value);
+
         return Ok(new
         {
-            deliveryId = id,
+            deliveryId = delivery?.Id ?? id,
+            orderId = delivery?.OrderId ?? id,
             status = delivery?.Status ?? "InTransit",
-            updatedAt = DateTime.UtcNow
+            latitude = courier?.Latitude,
+            longitude = courier?.Longitude,
+            updatedAt = delivery?.UpdatedAt ?? DateTime.UtcNow
         });
     }
 
     [HttpPatch("api/entregadores/me/disponibilidade")]
-    public IActionResult SetAvailability([FromBody] UpdateCourierAvailabilityRequest request)
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> SetAvailability([FromBody] UpdateCourierAvailabilityRequest request)
     {
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (Guid.TryParse(sub, out var userId))
+        {
+            var courier = await _deliveries.GetCourierByUserIdAsync(userId);
+            if (courier != null)
+            {
+                courier.IsAvailable = request.IsAvailable;
+                await _deliveries.SaveChangesAsync();
+            }
+        }
+
         return Ok(new
         {
             isAvailable = request.IsAvailable,
             updatedAt = DateTime.UtcNow
         });
     }
-}
-
-public class DeliveryDto
-{
-    public Guid Id { get; set; }
-    public Guid OrderId { get; set; }
-    public Guid? CourierId { get; set; }
-    public string Status { get; set; } = string.Empty;
-    public DateTime UpdatedAt { get; set; }
 }
 
 public class UpdateDeliveryStatusRequest

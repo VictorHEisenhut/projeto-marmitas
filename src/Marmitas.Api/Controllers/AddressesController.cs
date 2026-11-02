@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using Marmitas.Application.Common.Interfaces;
+using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -6,35 +8,41 @@ namespace Marmitas.Api.Controllers;
 
 [Route("api/usuarios/me/enderecos")]
 [ApiController]
-[Authorize]
+[Authorize(Roles = "customer,admin,super_admin")]
 public class AddressesController : ControllerBase
 {
-    private static readonly List<AddressDto> Addresses = new();
+    private readonly ICustomerProfileRepository _profiles;
+
+    public AddressesController(ICustomerProfileRepository profiles)
+    {
+        _profiles = profiles;
+    }
 
     [HttpGet]
-    public IActionResult GetMyAddresses()
+    public async Task<IActionResult> GetMyAddresses()
     {
         var userId = GetUserId();
-        var list = Addresses.Where(a => a.UserId == userId).ToList();
+        var list = await _profiles.GetAddressesByUserAsync(userId);
         return Ok(list);
     }
 
     [HttpPost]
-    public IActionResult CreateAddress([FromBody] SaveAddressRequest request)
+    public async Task<IActionResult> CreateAddress([FromBody] SaveAddressRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Street) || string.IsNullOrWhiteSpace(request.City))
             throw new Exception("Rua e cidade são obrigatórias.");
 
         var userId = GetUserId();
+        var existing = await _profiles.GetAddressesByUserAsync(userId);
+
         if (request.IsMain)
         {
-            foreach (var addr in Addresses.Where(a => a.UserId == userId))
+            foreach (var addr in existing)
                 addr.IsMain = false;
         }
 
-        var address = new AddressDto
+        var address = new Address
         {
-            Id = Guid.NewGuid(),
             UserId = userId,
             Street = request.Street.Trim(),
             Number = request.Number.Trim(),
@@ -43,18 +51,20 @@ public class AddressesController : ControllerBase
             City = request.City.Trim(),
             State = request.State.Trim(),
             ZipCode = request.ZipCode.Trim(),
-            IsMain = request.IsMain || !Addresses.Any(a => a.UserId == userId)
+            IsMain = request.IsMain || existing.Count == 0
         };
 
-        Addresses.Add(address);
+        await _profiles.AddAddressAsync(address);
+        await _profiles.SaveChangesAsync();
+
         return StatusCode(201, address);
     }
 
     [HttpPut("{id}")]
-    public IActionResult UpdateAddress(Guid id, [FromBody] SaveAddressRequest request)
+    public async Task<IActionResult> UpdateAddress(Guid id, [FromBody] SaveAddressRequest request)
     {
         var userId = GetUserId();
-        var address = Addresses.FirstOrDefault(a => a.Id == id && a.UserId == userId);
+        var address = await _profiles.GetAddressByIdAsync(id, userId);
         if (address == null)
             throw new Exception("Endereço não encontrado.");
 
@@ -66,33 +76,36 @@ public class AddressesController : ControllerBase
         address.State = request.State.Trim();
         address.ZipCode = request.ZipCode.Trim();
 
+        await _profiles.SaveChangesAsync();
         return Ok(address);
     }
 
     [HttpPatch("{id}/principal")]
-    public IActionResult SetMainAddress(Guid id)
+    public async Task<IActionResult> SetMainAddress(Guid id)
     {
         var userId = GetUserId();
-        var address = Addresses.FirstOrDefault(a => a.Id == id && a.UserId == userId);
-        if (address == null)
+        var addresses = await _profiles.GetAddressesByUserAsync(userId);
+        var target = addresses.FirstOrDefault(a => a.Id == id);
+        if (target == null)
             throw new Exception("Endereço não encontrado.");
 
-        foreach (var addr in Addresses.Where(a => a.UserId == userId))
-            addr.IsMain = false;
+        foreach (var addr in addresses)
+            addr.IsMain = addr.Id == id;
 
-        address.IsMain = true;
-        return Ok(address);
+        await _profiles.SaveChangesAsync();
+        return Ok(target);
     }
 
     [HttpDelete("{id}")]
-    public IActionResult DeleteAddress(Guid id)
+    public async Task<IActionResult> DeleteAddress(Guid id)
     {
         var userId = GetUserId();
-        var address = Addresses.FirstOrDefault(a => a.Id == id && a.UserId == userId);
+        var address = await _profiles.GetAddressByIdAsync(id, userId);
         if (address == null)
             throw new Exception("Endereço não encontrado.");
 
-        Addresses.Remove(address);
+        _profiles.RemoveAddress(address);
+        await _profiles.SaveChangesAsync();
         return NoContent();
     }
 
@@ -101,20 +114,6 @@ public class AddressesController : ControllerBase
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         return Guid.TryParse(sub, out var id) ? id : Guid.Empty;
     }
-}
-
-public class AddressDto
-{
-    public Guid Id { get; set; }
-    public Guid UserId { get; set; }
-    public string Street { get; set; } = string.Empty;
-    public string Number { get; set; } = string.Empty;
-    public string? Complement { get; set; }
-    public string Neighborhood { get; set; } = string.Empty;
-    public string City { get; set; } = string.Empty;
-    public string State { get; set; } = string.Empty;
-    public string ZipCode { get; set; } = string.Empty;
-    public bool IsMain { get; set; }
 }
 
 public class SaveAddressRequest

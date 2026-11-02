@@ -1,4 +1,6 @@
+using Marmitas.Application.Common.Interfaces;
 using Marmitas.Application.Orders;
+using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -7,76 +9,86 @@ namespace Marmitas.Api.Controllers;
 [ApiController]
 public class PaymentsController : ControllerBase
 {
-    private static readonly List<PaymentDto> Payments = new();
+    private readonly IPaymentRepository _payments;
     private readonly ICreateOrderService _orders;
 
-    public PaymentsController(ICreateOrderService orders)
+    public PaymentsController(IPaymentRepository payments, ICreateOrderService orders)
     {
+        _payments = payments;
         _orders = orders;
     }
 
     [HttpGet("api/pedidos/{id}/pagamento")]
-    [Authorize]
+    [Authorize(Roles = "customer,admin,super_admin")]
     public async Task<IActionResult> GetOrderPayment(Guid id)
     {
         var order = await _orders.GetByIdAsync(id);
-        var payment = Payments.FirstOrDefault(p => p.OrderId == id) ?? new PaymentDto
+        var payment = await _payments.GetPaymentByOrderIdAsync(id);
+        if (payment == null)
         {
-            Id = Guid.NewGuid(),
-            OrderId = order.Id,
-            Amount = order.TotalAmount,
-            Method = "PIX",
-            Status = order.Status == "Paid" ? "Approved" : "Pending",
-            CreatedAt = order.CreatedAt
-        };
+            return Ok(new
+            {
+                orderId = order.Id,
+                amount = order.TotalAmount,
+                method = "PIX",
+                status = order.Status == "Paid" ? "Approved" : "Pending",
+                createdAt = order.CreatedAt
+            });
+        }
 
         return Ok(payment);
     }
 
     [HttpPost("api/pedidos/{id}/pagamento")]
-    [Authorize]
+    [Authorize(Roles = "customer,admin,super_admin")]
     public async Task<IActionResult> ProcessOrderPayment(Guid id, [FromBody] ProcessPaymentRequest request)
     {
         var order = await _orders.GetByIdAsync(id);
         await _orders.UpdateStatusAsync(id, "Paid");
 
-        var existing = Payments.FirstOrDefault(p => p.OrderId == id);
-        if (existing != null)
-            Payments.Remove(existing);
-
-        var payment = new PaymentDto
+        var payment = await _payments.GetPaymentByOrderIdAsync(id);
+        if (payment == null)
         {
-            Id = Guid.NewGuid(),
-            OrderId = order.Id,
-            Amount = order.TotalAmount,
-            Method = string.IsNullOrWhiteSpace(request.Method) ? "PIX" : request.Method.Trim(),
-            Status = "Approved",
-            CreatedAt = DateTime.UtcNow
-        };
+            payment = new Payment
+            {
+                OrderId = order.Id,
+                Amount = order.TotalAmount,
+                Method = string.IsNullOrWhiteSpace(request.Method) ? "PIX" : request.Method.Trim(),
+                Status = "Approved"
+            };
+            await _payments.AddPaymentAsync(payment);
+        }
+        else
+        {
+            payment.Amount = order.TotalAmount;
+            payment.Method = string.IsNullOrWhiteSpace(request.Method) ? "PIX" : request.Method.Trim();
+            payment.Status = "Approved";
+        }
 
-        Payments.Add(payment);
+        await _payments.SaveChangesAsync();
         return StatusCode(201, payment);
     }
 
     [HttpPost("api/pagamentos/{id}/estornar")]
-    [Authorize]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> Refund(Guid id)
     {
-        var payment = Payments.FirstOrDefault(p => p.Id == id);
+        var payment = await _payments.GetPaymentByIdAsync(id);
         if (payment == null)
             throw new Exception("Pagamento não encontrado.");
 
         payment.Status = "Refunded";
+        await _payments.SaveChangesAsync();
         await _orders.UpdateStatusAsync(payment.OrderId, "Refunded");
 
         return Ok(payment);
     }
 
     [HttpGet("api/pagamentos/{id}")]
-    [Authorize]
-    public IActionResult GetPaymentDetails(Guid id)
+    [Authorize(Roles = "customer,admin,super_admin")]
+    public async Task<IActionResult> GetPaymentDetails(Guid id)
     {
-        var payment = Payments.FirstOrDefault(p => p.Id == id);
+        var payment = await _payments.GetPaymentByIdAsync(id);
         if (payment == null)
             throw new Exception("Pagamento não encontrado.");
 
@@ -85,27 +97,20 @@ public class PaymentsController : ControllerBase
 
     [HttpPost("api/pagamentos/webhook")]
     [AllowAnonymous]
-    public IActionResult Webhook([FromBody] PaymentWebhookRequest? request)
+    public async Task<IActionResult> Webhook([FromBody] PaymentWebhookRequest? request)
     {
         if (request?.PaymentId != null)
         {
-            var payment = Payments.FirstOrDefault(p => p.Id == request.PaymentId.Value);
+            var payment = await _payments.GetPaymentByIdAsync(request.PaymentId.Value);
             if (payment != null && !string.IsNullOrWhiteSpace(request.Status))
+            {
                 payment.Status = request.Status;
+                await _payments.SaveChangesAsync();
+            }
         }
 
         return Ok(new { received = true, processedAt = DateTime.UtcNow });
     }
-}
-
-public class PaymentDto
-{
-    public Guid Id { get; set; }
-    public Guid OrderId { get; set; }
-    public decimal Amount { get; set; }
-    public string Method { get; set; } = string.Empty;
-    public string Status { get; set; } = string.Empty;
-    public DateTime CreatedAt { get; set; }
 }
 
 public class ProcessPaymentRequest

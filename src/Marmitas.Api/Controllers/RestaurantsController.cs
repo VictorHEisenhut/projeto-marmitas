@@ -33,7 +33,7 @@ public class RestaurantsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> Create([FromBody] CreateRestaurantRequest request)
     {
         var subClaim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
@@ -45,7 +45,7 @@ public class RestaurantsController : ControllerBase
     }
 
     [HttpPut("{id}")]
-    [Authorize]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> Update(Guid id, [FromBody] CreateRestaurantRequest request)
     {
         var result = await _restaurantQueryService.UpdateAsync(id, request);
@@ -53,7 +53,7 @@ public class RestaurantsController : ControllerBase
     }
 
     [HttpPatch("{id}/status")]
-    [Authorize]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> ChangeStatus(Guid id, [FromBody] UpdateRestaurantStatusRequest request)
     {
         var result = await _restaurantQueryService.ChangeStatusAsync(id, request.Status);
@@ -61,7 +61,7 @@ public class RestaurantsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    [Authorize]
+    [Authorize(Roles = "admin,super_admin")]
     public async Task<IActionResult> Delete(Guid id)
     {
         await _restaurantQueryService.DeleteAsync(id);
