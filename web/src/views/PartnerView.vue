@@ -66,7 +66,7 @@ async function loadRestaurantDetails(restaurantId: string) {
   try {
     const [prodRes, catRes, finRes] = await Promise.allSettled([
       api.get<Product[]>(`/restaurantes/${restaurantId}/cardapio`),
-      api.get<Category[]>('/categorias', { params: { restaurantId } }),
+      api.get<Category[]>('/categorias'),
       api.get<RestaurantFinancials>(`/restaurantes/${restaurantId}/financeiro`),
     ])
 

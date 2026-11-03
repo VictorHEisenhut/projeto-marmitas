@@ -35,7 +35,7 @@ async function loadMenu() {
     const [restRes, prodRes, catRes] = await Promise.all([
       api.get<Restaurant>(`/restaurantes/${restaurantId.value}`),
       api.get<Product[]>(`/restaurantes/${restaurantId.value}/cardapio`),
-      api.get<Category[]>('/categorias', { params: { restaurantId: restaurantId.value } }),
+      api.get<Category[]>('/categorias'),
     ])
     restaurant.value = restRes.data
     products.value = prodRes.data

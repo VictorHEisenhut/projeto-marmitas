@@ -62,6 +62,11 @@ using (var scope = app.Services.CreateScope())
                 ('00000000-0000-0000-0002-000000000004', NULL, 'Vegetariana & Vegana', 4, '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00'),
                 ('00000000-0000-0000-0002-000000000005', NULL, 'Bebidas & Sobremesas', 5, '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00')
             ON CONFLICT (id) DO NOTHING;
+
+            DELETE FROM product_categories
+            WHERE restaurant_id IS NOT NULL
+              AND name IN ('Tradicionais', 'Fitness & Low Carb', 'Executiva', 'Vegetariana & Vegana', 'Bebidas & Sobremesas')
+              AND id NOT IN (SELECT DISTINCT category_id FROM products);
         ");
     }
 }

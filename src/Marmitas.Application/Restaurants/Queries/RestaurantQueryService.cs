@@ -148,13 +148,18 @@ public class RestaurantQueryService : IRestaurantQueryService
     public async Task<List<CategoryDto>> GetCategoriesAsync(Guid? restaurantId)
     {
         var categories = await _restaurantRepository.GetCategoriesAsync(restaurantId);
-        return categories.Select(c => new CategoryDto
-        {
-            Id = c.Id,
-            RestaurantId = c.RestaurantId,
-            Name = c.Name,
-            DisplayOrder = c.DisplayOrder
-        }).ToList();
+        return categories
+            .GroupBy(c => c.Name.Trim().ToLower())
+            .Select(g => g.OrderBy(c => c.RestaurantId.HasValue ? 1 : 0).First())
+            .OrderBy(c => c.DisplayOrder)
+            .ThenBy(c => c.Name)
+            .Select(c => new CategoryDto
+            {
+                Id = c.Id,
+                RestaurantId = c.RestaurantId,
+                Name = c.Name,
+                DisplayOrder = c.DisplayOrder
+            }).ToList();
     }
 
     public async Task<CategoryDto> CreateCategoryAsync(CreateCategoryRequest request)

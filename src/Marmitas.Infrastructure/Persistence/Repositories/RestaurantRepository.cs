@@ -37,7 +37,7 @@ public class RestaurantRepository : IRestaurantRepository
     {
         var query = _context.ProductCategories.AsNoTracking().AsQueryable();
         if (restaurantId.HasValue)
-            query = query.Where(c => c.RestaurantId == restaurantId.Value);
+            query = query.Where(c => c.RestaurantId == null || c.RestaurantId == restaurantId.Value);
 
         return await query.OrderBy(c => c.DisplayOrder).ThenBy(c => c.Name).ToListAsync();
     }
