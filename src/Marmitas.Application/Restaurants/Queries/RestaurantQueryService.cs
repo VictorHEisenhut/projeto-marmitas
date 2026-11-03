@@ -27,6 +27,15 @@ public interface IRestaurantQueryService
 
 public class RestaurantQueryService : IRestaurantQueryService
 {
+    private static readonly (string Name, int DisplayOrder)[] DefaultCategories =
+    {
+        ("Tradicionais", 1),
+        ("Fitness & Low Carb", 2),
+        ("Executiva", 3),
+        ("Vegetariana & Vegana", 4),
+        ("Bebidas & Sobremesas", 5)
+    };
+
     private readonly IRestaurantRepository _restaurantRepository;
 
     public RestaurantQueryService(IRestaurantRepository restaurantRepository)
@@ -69,6 +78,12 @@ public class RestaurantQueryService : IRestaurantQueryService
         restaurant.Approve();
 
         await _restaurantRepository.AddAsync(restaurant);
+        foreach (var item in DefaultCategories)
+        {
+            await _restaurantRepository.AddCategoryAsync(
+                new ProductCategory(restaurant.Id, item.Name, item.DisplayOrder));
+        }
+
         await _restaurantRepository.SaveChangesAsync();
 
         return MapRestaurant(restaurant);
@@ -122,6 +137,48 @@ public class RestaurantQueryService : IRestaurantQueryService
     public async Task<List<CategoryDto>> GetCategoriesAsync(Guid? restaurantId)
     {
         var categories = await _restaurantRepository.GetCategoriesAsync(restaurantId);
+
+        if (restaurantId.HasValue && categories.Count == 0)
+        {
+            var restaurant = await _restaurantRepository.GetByIdAsync(restaurantId.Value);
+            if (restaurant != null)
+            {
+                foreach (var item in DefaultCategories)
+                {
+                    await _restaurantRepository.AddCategoryAsync(
+                        new ProductCategory(restaurant.Id, item.Name, item.DisplayOrder));
+                }
+
+                await _restaurantRepository.SaveChangesAsync();
+                categories = await _restaurantRepository.GetCategoriesAsync(restaurantId);
+            }
+        }
+        else if (!restaurantId.HasValue)
+        {
+            var restaurants = await _restaurantRepository.GetAllApprovedAsync();
+            var addedAny = false;
+
+            foreach (var restaurant in restaurants)
+            {
+                if (categories.Any(c => c.RestaurantId == restaurant.Id))
+                    continue;
+
+                foreach (var item in DefaultCategories)
+                {
+                    await _restaurantRepository.AddCategoryAsync(
+                        new ProductCategory(restaurant.Id, item.Name, item.DisplayOrder));
+                }
+
+                addedAny = true;
+            }
+
+            if (addedAny)
+            {
+                await _restaurantRepository.SaveChangesAsync();
+                categories = await _restaurantRepository.GetCategoriesAsync(null);
+            }
+        }
+
         return categories.Select(c => new CategoryDto
         {
             Id = c.Id,

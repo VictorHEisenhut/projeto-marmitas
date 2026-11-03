@@ -55,6 +55,14 @@ public class AppDbContext : DbContext
             new Role("customer", "Cliente da plataforma") { Id = customerRoleId }
         );
 
+        modelBuilder.Entity<ProductCategory>().HasData(
+            new ProductCategory(null, "Tradicionais", 1) { Id = Guid.Parse("00000000-0000-0000-0002-000000000001") },
+            new ProductCategory(null, "Fitness & Low Carb", 2) { Id = Guid.Parse("00000000-0000-0000-0002-000000000002") },
+            new ProductCategory(null, "Executiva", 3) { Id = Guid.Parse("00000000-0000-0000-0002-000000000003") },
+            new ProductCategory(null, "Vegetariana & Vegana", 4) { Id = Guid.Parse("00000000-0000-0000-0002-000000000004") },
+            new ProductCategory(null, "Bebidas & Sobremesas", 5) { Id = Guid.Parse("00000000-0000-0000-0002-000000000005") }
+        );
+
         base.OnModelCreating(modelBuilder);
     }
 

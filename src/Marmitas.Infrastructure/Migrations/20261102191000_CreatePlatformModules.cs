@@ -204,6 +204,16 @@ namespace Marmitas.Infrastructure.Migrations
                     ('a1b2c3d4-0001-0000-0000-000000000005', 'admin', 'Operação da plataforma', '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00'),
                     ('a1b2c3d4-0001-0000-0000-000000000006', 'super_admin', 'Configurações globais e financeiro', '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00')
                 ON CONFLICT (name) DO NOTHING;
+
+                ALTER TABLE product_categories ALTER COLUMN restaurant_id DROP NOT NULL;
+
+                INSERT INTO product_categories (id, restaurant_id, name, display_order, created_at, updated_at) VALUES
+                    ('00000000-0000-0000-0002-000000000001', NULL, 'Tradicionais', 1, '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00'),
+                    ('00000000-0000-0000-0002-000000000002', NULL, 'Fitness & Low Carb', 2, '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00'),
+                    ('00000000-0000-0000-0002-000000000003', NULL, 'Executiva', 3, '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00'),
+                    ('00000000-0000-0000-0002-000000000004', NULL, 'Vegetariana & Vegana', 4, '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00'),
+                    ('00000000-0000-0000-0002-000000000005', NULL, 'Bebidas & Sobremesas', 5, '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00')
+                ON CONFLICT (id) DO NOTHING;
             ");
         }
 
