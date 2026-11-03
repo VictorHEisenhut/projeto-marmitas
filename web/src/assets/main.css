@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-canvas: #fffbf7;
+    --color-brand: #ea580c;
+    --color-fresh: #16a34a;
+  }
+
+  html {
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;
+    background-color: #fffbf7;
+    color: #1c1917;
+    scroll-behavior: smooth;
+  }
+
+  *:focus-visible {
+    outline: 2px solid #ea580c;
+    outline-offset: 2px;
+  }
+}
+

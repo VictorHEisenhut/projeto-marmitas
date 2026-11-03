@@ -195,6 +195,15 @@ namespace Marmitas.Infrastructure.Migrations
                 CREATE INDEX IF NOT EXISTS ix_deliveries_order_id ON deliveries (order_id);
                 CREATE INDEX IF NOT EXISTS ix_reviews_order_id ON reviews (order_id);
                 CREATE INDEX IF NOT EXISTS ix_reviews_restaurant_id ON reviews (restaurant_id);
+
+                INSERT INTO roles (id, name, description, created_at, updated_at) VALUES
+                    ('a1b2c3d4-0001-0000-0000-000000000001', 'customer', 'Cliente final', '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00'),
+                    ('a1b2c3d4-0001-0000-0000-000000000002', 'restaurant_owner', 'Dono do restaurante', '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00'),
+                    ('a1b2c3d4-0001-0000-0000-000000000003', 'restaurant_staff', 'Funcionário do restaurante', '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00'),
+                    ('a1b2c3d4-0001-0000-0000-000000000004', 'driver', 'Entregador', '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00'),
+                    ('a1b2c3d4-0001-0000-0000-000000000005', 'admin', 'Operação da plataforma', '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00'),
+                    ('a1b2c3d4-0001-0000-0000-000000000006', 'super_admin', 'Configurações globais e financeiro', '2026-01-01 00:00:00+00', '2026-01-01 00:00:00+00')
+                ON CONFLICT (name) DO NOTHING;
             ");
         }
 
