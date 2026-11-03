@@ -25,6 +25,7 @@ export interface RegisterRequest {
   email: string
   phone?: string | null
   password: string
+  role?: string
 }
 
 export interface LoginResponse {
@@ -56,7 +57,7 @@ export interface Restaurant {
 
 export interface Category {
   id: string
-  restaurantId: string
+  restaurantId?: string | null
   name: string
   displayOrder: number
 }

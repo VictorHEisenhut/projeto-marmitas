@@ -33,15 +33,22 @@ public class RegisterUserService : IRegisterUserService
             throw new Exception("Já existe uma conta com este e-mail.");
         }
 
-        var customerRole = await _users.GetRoleByNameAsync(RoleNames.Customer);
-        if (customerRole == null)
+        var requestedRole = request.Role?.Trim().ToLower() switch
         {
-            customerRole = new Role(RoleNames.Customer, "Cliente da plataforma");
+            "restaurant_owner" => "restaurant_owner",
+            "driver" => "driver",
+            _ => RoleNames.Customer
+        };
+
+        var role = await _users.GetRoleByNameAsync(requestedRole);
+        if (role == null)
+        {
+            role = new Role(requestedRole, "Perfil da plataforma");
         }
 
         var passwordHash = _passwordHasher.Hash(request.Password);
         var user = new User(request.Name, email, request.Phone, passwordHash);
-        user.AddRole(customerRole);
+        user.AddRole(role);
 
         await _users.AddAsync(user);
         await _users.SaveChangesAsync();
@@ -70,7 +77,6 @@ public class RegisterUserService : IRegisterUserService
 
     private static bool IsValidEmail(string email)
     {
-
         if (email.Length > 254 || email.Contains(' '))
             return false;
 
@@ -83,4 +89,3 @@ public class RegisterUserService : IRegisterUserService
         return dot > 0 && dot < domain.Length - 1;
     }
 }
-

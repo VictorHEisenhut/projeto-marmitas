@@ -27,20 +27,13 @@ public interface IRestaurantQueryService
 
 public class RestaurantQueryService : IRestaurantQueryService
 {
-    private static readonly (string Name, int DisplayOrder)[] DefaultCategories =
-    {
-        ("Tradicionais", 1),
-        ("Fitness & Low Carb", 2),
-        ("Executiva", 3),
-        ("Vegetariana & Vegana", 4),
-        ("Bebidas & Sobremesas", 5)
-    };
-
     private readonly IRestaurantRepository _restaurantRepository;
+    private readonly IUserRepository _userRepository;
 
-    public RestaurantQueryService(IRestaurantRepository restaurantRepository)
+    public RestaurantQueryService(IRestaurantRepository restaurantRepository, IUserRepository userRepository)
     {
         _restaurantRepository = restaurantRepository;
+        _userRepository = userRepository;
     }
 
     public async Task<List<RestaurantDto>> GetAllPublicAsync()
@@ -66,11 +59,15 @@ public class RestaurantQueryService : IRestaurantQueryService
         if (string.IsNullOrWhiteSpace(request.Document))
             throw new Exception("O CNPJ/CPF do restaurante é obrigatório.");
 
+        var resolvedOwnerId = request.OwnerId.HasValue && request.OwnerId.Value != Guid.Empty
+            ? request.OwnerId.Value
+            : ownerId;
+
         var restaurant = new Restaurant(
             request.Name,
             request.Description ?? string.Empty,
             request.Document,
-            ownerId)
+            resolvedOwnerId)
         {
             ImageUrl = request.ImageUrl
         };
@@ -78,12 +75,7 @@ public class RestaurantQueryService : IRestaurantQueryService
         restaurant.Approve();
 
         await _restaurantRepository.AddAsync(restaurant);
-        foreach (var item in DefaultCategories)
-        {
-            await _restaurantRepository.AddCategoryAsync(
-                new ProductCategory(restaurant.Id, item.Name, item.DisplayOrder));
-        }
-
+        await EnsureOwnerRoleAsync(resolvedOwnerId);
         await _restaurantRepository.SaveChangesAsync();
 
         return MapRestaurant(restaurant);
@@ -104,8 +96,27 @@ public class RestaurantQueryService : IRestaurantQueryService
             restaurant.Document = request.Document.Trim();
         restaurant.ImageUrl = request.ImageUrl;
 
+        if (request.OwnerId.HasValue && request.OwnerId.Value != Guid.Empty)
+        {
+            restaurant.OwnerId = request.OwnerId.Value;
+            await EnsureOwnerRoleAsync(request.OwnerId.Value);
+        }
+
         await _restaurantRepository.SaveChangesAsync();
         return MapRestaurant(restaurant);
+    }
+
+    private async Task EnsureOwnerRoleAsync(Guid userId)
+    {
+        var user = await _userRepository.GetByIdAsync(userId);
+        if (user == null || user.GetRoleNames().Contains("restaurant_owner"))
+            return;
+
+        var ownerRole = await _userRepository.GetRoleByNameAsync("restaurant_owner");
+        if (ownerRole != null)
+        {
+            user.AddRole(ownerRole);
+        }
     }
 
     public async Task<RestaurantDto> ChangeStatusAsync(Guid id, string status)
@@ -137,48 +148,6 @@ public class RestaurantQueryService : IRestaurantQueryService
     public async Task<List<CategoryDto>> GetCategoriesAsync(Guid? restaurantId)
     {
         var categories = await _restaurantRepository.GetCategoriesAsync(restaurantId);
-
-        if (restaurantId.HasValue && categories.Count == 0)
-        {
-            var restaurant = await _restaurantRepository.GetByIdAsync(restaurantId.Value);
-            if (restaurant != null)
-            {
-                foreach (var item in DefaultCategories)
-                {
-                    await _restaurantRepository.AddCategoryAsync(
-                        new ProductCategory(restaurant.Id, item.Name, item.DisplayOrder));
-                }
-
-                await _restaurantRepository.SaveChangesAsync();
-                categories = await _restaurantRepository.GetCategoriesAsync(restaurantId);
-            }
-        }
-        else if (!restaurantId.HasValue)
-        {
-            var restaurants = await _restaurantRepository.GetAllApprovedAsync();
-            var addedAny = false;
-
-            foreach (var restaurant in restaurants)
-            {
-                if (categories.Any(c => c.RestaurantId == restaurant.Id))
-                    continue;
-
-                foreach (var item in DefaultCategories)
-                {
-                    await _restaurantRepository.AddCategoryAsync(
-                        new ProductCategory(restaurant.Id, item.Name, item.DisplayOrder));
-                }
-
-                addedAny = true;
-            }
-
-            if (addedAny)
-            {
-                await _restaurantRepository.SaveChangesAsync();
-                categories = await _restaurantRepository.GetCategoriesAsync(null);
-            }
-        }
-
         return categories.Select(c => new CategoryDto
         {
             Id = c.Id,
@@ -193,11 +162,17 @@ public class RestaurantQueryService : IRestaurantQueryService
         if (string.IsNullOrWhiteSpace(request.Name))
             throw new Exception("O nome da categoria é obrigatório.");
 
-        var restaurant = await _restaurantRepository.GetByIdAsync(request.RestaurantId);
-        if (restaurant == null)
-            throw new Exception("Restaurante não encontrado.");
+        if (request.RestaurantId.HasValue && request.RestaurantId.Value != Guid.Empty)
+        {
+            var restaurant = await _restaurantRepository.GetByIdAsync(request.RestaurantId.Value);
+            if (restaurant == null)
+                throw new Exception("Restaurante não encontrado.");
+        }
 
-        var category = new ProductCategory(request.RestaurantId, request.Name, request.DisplayOrder);
+        var category = new ProductCategory(
+            request.RestaurantId == Guid.Empty ? null : request.RestaurantId,
+            request.Name,
+            request.DisplayOrder);
 
         await _restaurantRepository.AddCategoryAsync(category);
         await _restaurantRepository.SaveChangesAsync();
@@ -277,7 +252,7 @@ public class RestaurantQueryService : IRestaurantQueryService
             throw new Exception("Restaurante não encontrado.");
 
         var category = await _restaurantRepository.GetCategoryByIdAsync(request.CategoryId);
-        if (category == null || category.RestaurantId != restaurantId)
+        if (category == null || (category.RestaurantId.HasValue && category.RestaurantId != restaurantId))
             throw new Exception("Categoria não encontrada para este restaurante.");
 
         var product = new Product(

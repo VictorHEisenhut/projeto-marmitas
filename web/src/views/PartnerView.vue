@@ -16,10 +16,15 @@ const financials = ref<RestaurantFinancials | null>(null)
 
 const loading = ref(true)
 const loadingDetails = ref(false)
+const savingRestaurant = ref(false)
 const savingProduct = ref(false)
 const updatingOrder = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
+
+const restaurantName = ref('')
+const restaurantDocument = ref('')
+const restaurantDescription = ref('')
 
 const productName = ref('')
 const productDescription = ref('')
@@ -84,6 +89,41 @@ watch(selectedRestaurantId, (newId) => {
     void loadRestaurantDetails(newId)
   }
 })
+
+async function handleCreateRestaurant() {
+  errorMessage.value = ''
+  successMessage.value = ''
+
+  if (!restaurantName.value.trim()) {
+    errorMessage.value = 'Informe o nome do restaurante.'
+    return
+  }
+  if (!restaurantDocument.value.trim()) {
+    errorMessage.value = 'Informe o CNPJ ou CPF do restaurante.'
+    return
+  }
+
+  savingRestaurant.value = true
+  try {
+    const { data } = await api.post<Restaurant>('/restaurantes', {
+      name: restaurantName.value.trim(),
+      document: restaurantDocument.value.trim(),
+      description: restaurantDescription.value.trim(),
+      ownerId: auth.user?.id,
+    })
+
+    restaurantName.value = ''
+    restaurantDocument.value = ''
+    restaurantDescription.value = ''
+    successMessage.value = 'Restaurante cadastrado com sucesso.'
+    await loadRestaurants()
+    selectedRestaurantId.value = data.id
+  } catch (error) {
+    errorMessage.value = getErrorMessage(error, 'Não foi possível cadastrar o restaurante.')
+  } finally {
+    savingRestaurant.value = false
+  }
+}
 
 async function handleCreateProduct() {
   errorMessage.value = ''
@@ -231,15 +271,59 @@ onMounted(() => {
 
       <div
         v-else-if="restaurants.length === 0"
-        class="rounded-xl border border-stone-200 bg-white p-8 text-center"
+        class="mx-auto max-w-lg rounded-xl border border-stone-200 bg-white p-6 shadow-sm"
       >
-        <Store class="mx-auto h-10 w-10 text-stone-400" />
-        <h2 class="mt-3 text-base font-semibold text-stone-900">
-          Nenhum restaurante vinculado
-        </h2>
-        <p class="mt-1 text-sm text-stone-500">
-          Ainda não há restaurantes associados à sua conta.
-        </p>
+        <div class="text-center">
+          <Store class="mx-auto h-10 w-10 text-brand-600" />
+          <h2 class="mt-3 text-base font-semibold text-stone-900">
+            Cadastrar seu restaurante
+          </h2>
+          <p class="mt-1 text-sm text-stone-500">
+            Vincule seu restaurante à sua conta para gerenciar o cardápio e os pedidos.
+          </p>
+        </div>
+
+        <form class="mt-6 space-y-4" @submit.prevent="handleCreateRestaurant">
+          <div>
+            <label class="block text-xs font-medium text-stone-700">Nome do restaurante</label>
+            <input
+              v-model="restaurantName"
+              type="text"
+              required
+              placeholder="Ex: Cozinha Caseira da Maria"
+              class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 focus:border-brand-600 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-stone-700">CNPJ / CPF</label>
+            <input
+              v-model="restaurantDocument"
+              type="text"
+              required
+              placeholder="00.000.000/0001-00"
+              class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 focus:border-brand-600 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-stone-700">Descrição</label>
+            <textarea
+              v-model="restaurantDescription"
+              rows="2"
+              placeholder="Especialidades e horário de atendimento"
+              class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 focus:border-brand-600 focus:outline-none"
+            />
+          </div>
+
+          <button
+            type="submit"
+            :disabled="savingRestaurant"
+            class="w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
+          >
+            {{ savingRestaurant ? 'Cadastrando...' : 'Criar e vincular restaurante' }}
+          </button>
+        </form>
       </div>
 
       <template v-else>

@@ -11,6 +11,7 @@ const auth = useAuthStore()
 const name = ref('')
 const email = ref('')
 const phone = ref('')
+const accountRole = ref<'customer' | 'restaurant_owner' | 'driver'>('customer')
 const password = ref('')
 const confirmPassword = ref('')
 const showPassword = ref(false)
@@ -57,6 +58,7 @@ async function handleSubmit() {
       email: email.value,
       phone: phone.value || null,
       password: password.value,
+      role: accountRole.value,
     })
 
     try {
@@ -111,6 +113,21 @@ async function handleSubmit() {
         </div>
 
         <form class="space-y-4" @submit.prevent="handleSubmit">
+          <div>
+            <label for="accountRole" class="block text-sm font-medium text-stone-700">
+              Tipo de conta
+            </label>
+            <select
+              id="accountRole"
+              v-model="accountRole"
+              class="mt-1 block w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600"
+            >
+              <option value="customer">Cliente (pedir marmitas e assinar planos)</option>
+              <option value="restaurant_owner">Dono de Restaurante (vender marmitas)</option>
+              <option value="driver">Entregador Parceiro (realizar entregas)</option>
+            </select>
+          </div>
+
           <div>
             <label for="name" class="block text-sm font-medium text-stone-700">
               Nome completo

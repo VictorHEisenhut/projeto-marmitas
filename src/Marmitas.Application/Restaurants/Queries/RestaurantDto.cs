@@ -17,6 +17,7 @@ public class CreateRestaurantRequest
     public string Description { get; set; } = string.Empty;
     public string Document { get; set; } = string.Empty;
     public string? ImageUrl { get; set; }
+    public Guid? OwnerId { get; set; }
 }
 
 public class UpdateRestaurantStatusRequest
