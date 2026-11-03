@@ -34,6 +34,13 @@ builder.Services.AddScoped<Marmitas.Application.Restaurants.Queries.IRestaurantQ
 builder.Services.AddScoped<Marmitas.Application.Orders.ICreateOrderService, Marmitas.Application.Orders.CreateOrderService>();
 
 builder.Services
+    .AddCors(options =>
+    {
+        options.AddDefaultPolicy(policy =>
+            policy.AllowAnyOrigin()
+                  .AllowAnyHeader()
+                  .AllowAnyMethod());
+    })
     .AddApiControllers()
     .AddSwaggerConfig()
     .AddJwtAuthentication(builder.Configuration);
@@ -62,6 +69,7 @@ else
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseSerilogRequestLogging();
 
+app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
