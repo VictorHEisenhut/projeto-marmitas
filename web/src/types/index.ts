@@ -53,6 +53,13 @@ export interface Restaurant {
   imageUrl?: string | null
   status: string
   ownerId: string
+  addressStreet?: string
+  addressNumber?: string
+  addressComplement?: string | null
+  addressNeighborhood?: string
+  addressCity?: string
+  addressState?: string
+  addressZipCode?: string
 }
 
 export interface Category {
@@ -60,6 +67,12 @@ export interface Category {
   restaurantId?: string | null
   name: string
   displayOrder: number
+}
+
+export interface ProductAddon {
+  name: string
+  extraPrice: number
+  maxQuantity: number
 }
 
 export interface Product {
@@ -72,6 +85,11 @@ export interface Product {
   price: number
   isActive: boolean
   imageUrl?: string | null
+  availableInPlans?: boolean
+  allowsCutlery?: boolean
+  cutleryHasExtraCost?: boolean
+  cutleryPrice?: number
+  addons?: ProductAddon[]
 }
 
 export interface Plan {
@@ -126,13 +144,31 @@ export interface OrderItem {
 export interface Order {
   id: string
   customerId: string
+  customerName?: string
   restaurantId: string
   restaurantName: string
   totalAmount: number
   status: string
   createdAt: string
   updatedAt: string
+  complaintMessage?: string | null
+  complaintCreatedAt?: string | null
+  complaintReply?: string | null
+  complaintRepliedAt?: string | null
   items: OrderItem[]
+}
+
+export interface ReviewItem {
+  id: string
+  orderId?: string
+  restaurantId?: string
+  userId?: string
+  rating: number
+  comment: string
+  targetType?: string
+  authorName?: string
+  restaurantName?: string
+  createdAt?: string
 }
 
 export interface CreateOrderResponse {
@@ -181,6 +217,21 @@ export interface Delivery {
   status: string
   createdAt?: string
   updatedAt?: string
+  restaurantName?: string
+  restaurantAddress?: string
+  deliveryNeighborhood?: string
+  deliveryAddress?: string
+}
+
+export interface CourierBillingAddress {
+  street: string
+  number: string
+  complement?: string | null
+  neighborhood: string
+  city: string
+  state: string
+  zipCode: string
+  isComplete?: boolean
 }
 
 export interface CourierDocument {
@@ -204,4 +255,55 @@ export interface AdminDashboard {
   totalRestaurants: number
   totalOrders: number
   totalRevenue: number
+}
+
+export interface NutritionalEstimate {
+  calories: number
+  protein: number
+  carbs: number
+  fat: number
+}
+
+export interface AiRecommendationRequest {
+  restaurantId?: string | null
+  query: string
+  dietaryGoal?: string | null
+  maxPrice?: number | null
+}
+
+export interface AiRecommendationItem {
+  productId: string
+  productName: string
+  price: number
+  restaurantName?: string | null
+  whyRecommended: string
+  nutritionalEstimate: NutritionalEstimate
+  tags: string[]
+}
+
+export interface AiRecommendationResponse {
+  generalAdvice: string
+  recommendations: AiRecommendationItem[]
+  isLiveAi: boolean
+}
+
+export interface AiGenerateMarmitaRequest {
+  baseNameOrIngredients: string
+  targetCategory?: string | null
+  price?: number | null
+}
+
+export interface AiGenerateMarmitaResponse {
+  suggestedName: string
+  gourmetDescription: string
+  suggestedCategory: string
+  nutritionalEstimate: NutritionalEstimate
+  highlightIngredients: string[]
+  isLiveAi: boolean
+}
+
+export interface AiStatusResponse {
+  isConfigured: boolean
+  model: string
+  provider: string
 }

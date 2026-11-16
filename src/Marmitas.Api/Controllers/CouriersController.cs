@@ -25,17 +25,77 @@ public class CouriersController : ControllerBase
             throw new Exception("O nome do entregador é obrigatório.");
 
         var userId = GetUserIdOrNull();
-        var courier = new Courier
-        {
-            UserId = userId,
-            Name = request.Name.Trim(),
-            Document = request.Document ?? string.Empty,
-            Phone = request.Phone ?? string.Empty,
-            Status = "Pending",
-            IsAvailable = true
-        };
+        Courier? courier = null;
 
-        await _deliveries.AddCourierAsync(courier);
+        if (userId.HasValue && userId.Value != Guid.Empty)
+        {
+            courier = await _deliveries.GetCourierByUserIdAsync(userId.Value);
+        }
+
+        if (courier == null)
+        {
+            courier = new Courier
+            {
+                UserId = userId,
+                Name = request.Name.Trim(),
+                Document = request.Document ?? request.Cpf ?? string.Empty,
+                Phone = request.Phone ?? string.Empty,
+                Status = "Approved",
+                IsAvailable = true,
+                BillingStreet = request.BillingStreet?.Trim() ?? string.Empty,
+                BillingNumber = request.BillingNumber?.Trim() ?? string.Empty,
+                BillingComplement = request.BillingComplement?.Trim(),
+                BillingNeighborhood = request.BillingNeighborhood?.Trim() ?? string.Empty,
+                BillingCity = request.BillingCity?.Trim() ?? string.Empty,
+                BillingState = request.BillingState?.Trim().ToUpperInvariant() ?? string.Empty,
+                BillingZipCode = request.BillingZipCode?.Trim() ?? string.Empty
+            };
+            await _deliveries.AddCourierAsync(courier);
+        }
+        else
+        {
+            courier.Name = request.Name.Trim();
+            if (!string.IsNullOrWhiteSpace(request.Document) || !string.IsNullOrWhiteSpace(request.Cpf))
+                courier.Document = (request.Document ?? request.Cpf ?? string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(request.Phone))
+                courier.Phone = request.Phone.Trim();
+            if (!string.IsNullOrWhiteSpace(request.BillingStreet))
+                courier.BillingStreet = request.BillingStreet.Trim();
+            if (!string.IsNullOrWhiteSpace(request.BillingNumber))
+                courier.BillingNumber = request.BillingNumber.Trim();
+            if (request.BillingComplement != null)
+                courier.BillingComplement = request.BillingComplement.Trim();
+            if (!string.IsNullOrWhiteSpace(request.BillingNeighborhood))
+                courier.BillingNeighborhood = request.BillingNeighborhood.Trim();
+            if (!string.IsNullOrWhiteSpace(request.BillingCity))
+                courier.BillingCity = request.BillingCity.Trim();
+            if (!string.IsNullOrWhiteSpace(request.BillingState))
+                courier.BillingState = request.BillingState.Trim().ToUpperInvariant();
+            if (!string.IsNullOrWhiteSpace(request.BillingZipCode))
+                courier.BillingZipCode = request.BillingZipCode.Trim();
+        }
+
+        var targetCourierId = userId ?? courier.Id;
+
+        if (!string.IsNullOrWhiteSpace(request.Cpf))
+        {
+            await UpsertDocumentInternalAsync(targetCourierId, "CPF", request.Cpf.Trim());
+        }
+        if (!string.IsNullOrWhiteSpace(request.Cnh))
+        {
+            await UpsertDocumentInternalAsync(targetCourierId, "CNH", request.Cnh.Trim());
+        }
+        if (!string.IsNullOrWhiteSpace(request.VehicleModel) && !string.IsNullOrWhiteSpace(request.VehiclePlate))
+        {
+            await _deliveries.AddVehicleAsync(new CourierVehicle
+            {
+                CourierId = targetCourierId,
+                Type = string.IsNullOrWhiteSpace(request.VehicleType) ? "Moto" : request.VehicleType.Trim(),
+                Model = request.VehicleModel.Trim(),
+                LicensePlate = request.VehiclePlate.Trim().ToUpperInvariant()
+            });
+        }
+
         await _deliveries.SaveChangesAsync();
 
         return StatusCode(201, courier);
@@ -98,17 +158,34 @@ public class CouriersController : ControllerBase
     [Authorize(Roles = "driver,admin,super_admin")]
     public async Task<IActionResult> UploadDocument([FromBody] SaveCourierDocumentRequest request)
     {
-        var doc = new CourierDocument
-        {
-            CourierId = GetUserId(),
-            Type = request.Type,
-            Number = request.Number,
-            Status = "Verified"
-        };
+        if (string.IsNullOrWhiteSpace(request.Type) || string.IsNullOrWhiteSpace(request.Number))
+            throw new Exception("Tipo e número do documento são obrigatórios.");
 
-        await _deliveries.AddDocumentAsync(doc);
+        var doc = await UpsertDocumentInternalAsync(GetUserId(), request.Type.Trim().ToUpperInvariant(), request.Number.Trim());
         await _deliveries.SaveChangesAsync();
         return StatusCode(201, doc);
+    }
+
+    private async Task<CourierDocument> UpsertDocumentInternalAsync(Guid courierId, string type, string number)
+    {
+        var existing = await _deliveries.GetDocumentsByCourierAsync(courierId);
+        var match = existing.FirstOrDefault(d => string.Equals(d.Type, type, StringComparison.OrdinalIgnoreCase));
+        if (match != null)
+        {
+            match.Number = number;
+            match.Status = "Verified";
+            return match;
+        }
+
+        var doc = new CourierDocument
+        {
+            CourierId = courierId,
+            Type = type,
+            Number = number,
+            Status = "Verified"
+        };
+        await _deliveries.AddDocumentAsync(doc);
+        return doc;
     }
 
     [HttpGet("me/veiculos")]
@@ -123,12 +200,15 @@ public class CouriersController : ControllerBase
     [Authorize(Roles = "driver,admin,super_admin")]
     public async Task<IActionResult> AddVehicle([FromBody] SaveCourierVehicleRequest request)
     {
+        if (string.IsNullOrWhiteSpace(request.Model) || string.IsNullOrWhiteSpace(request.LicensePlate))
+            throw new Exception("Modelo e placa do veículo são obrigatórios.");
+
         var vehicle = new CourierVehicle
         {
             CourierId = GetUserId(),
-            Type = request.Type,
-            Model = request.Model,
-            LicensePlate = request.LicensePlate
+            Type = string.IsNullOrWhiteSpace(request.Type) ? "Moto" : request.Type.Trim(),
+            Model = request.Model.Trim(),
+            LicensePlate = request.LicensePlate.Trim().ToUpperInvariant()
         };
 
         await _deliveries.AddVehicleAsync(vehicle);
@@ -144,12 +224,92 @@ public class CouriersController : ControllerBase
         if (vehicle == null)
             throw new Exception("Veículo não encontrado.");
 
-        vehicle.Type = request.Type;
-        vehicle.Model = request.Model;
-        vehicle.LicensePlate = request.LicensePlate;
+        vehicle.Type = request.Type.Trim();
+        vehicle.Model = request.Model.Trim();
+        vehicle.LicensePlate = request.LicensePlate.Trim().ToUpperInvariant();
 
         await _deliveries.SaveChangesAsync();
         return Ok(vehicle);
+    }
+
+    [HttpGet("me/endereco-cobranca")]
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> GetMyBillingAddress()
+    {
+        var userId = GetUserId();
+        var courier = await _deliveries.GetCourierByUserIdAsync(userId);
+
+        var isComplete = courier != null &&
+            !string.IsNullOrWhiteSpace(courier.BillingStreet) &&
+            !string.IsNullOrWhiteSpace(courier.BillingNumber) &&
+            !string.IsNullOrWhiteSpace(courier.BillingNeighborhood) &&
+            !string.IsNullOrWhiteSpace(courier.BillingCity) &&
+            !string.IsNullOrWhiteSpace(courier.BillingState) &&
+            !string.IsNullOrWhiteSpace(courier.BillingZipCode);
+
+        return Ok(new CourierBillingAddressDto
+        {
+            Street = courier?.BillingStreet ?? string.Empty,
+            Number = courier?.BillingNumber ?? string.Empty,
+            Complement = courier?.BillingComplement,
+            Neighborhood = courier?.BillingNeighborhood ?? string.Empty,
+            City = courier?.BillingCity ?? string.Empty,
+            State = courier?.BillingState ?? string.Empty,
+            ZipCode = courier?.BillingZipCode ?? string.Empty,
+            IsComplete = isComplete
+        });
+    }
+
+    [HttpPut("me/endereco-cobranca")]
+    [HttpPost("me/endereco-cobranca")]
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> SaveMyBillingAddress([FromBody] SaveCourierBillingAddressRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Street) ||
+            string.IsNullOrWhiteSpace(request.Number) ||
+            string.IsNullOrWhiteSpace(request.Neighborhood) ||
+            string.IsNullOrWhiteSpace(request.City) ||
+            string.IsNullOrWhiteSpace(request.State) ||
+            string.IsNullOrWhiteSpace(request.ZipCode))
+        {
+            throw new Exception("Preencha todos os campos obrigatórios do endereço de cobrança (CEP, Rua, Número, Bairro, Cidade e UF).");
+        }
+
+        var userId = GetUserId();
+        var courier = await _deliveries.GetCourierByUserIdAsync(userId);
+        if (courier == null)
+        {
+            courier = new Courier
+            {
+                UserId = userId,
+                Name = User.Identity?.Name ?? "Entregador",
+                Status = "Approved",
+                IsAvailable = true
+            };
+            await _deliveries.AddCourierAsync(courier);
+        }
+
+        courier.BillingStreet = request.Street.Trim();
+        courier.BillingNumber = request.Number.Trim();
+        courier.BillingComplement = request.Complement?.Trim();
+        courier.BillingNeighborhood = request.Neighborhood.Trim();
+        courier.BillingCity = request.City.Trim();
+        courier.BillingState = request.State.Trim().ToUpperInvariant();
+        courier.BillingZipCode = request.ZipCode.Trim();
+
+        await _deliveries.SaveChangesAsync();
+
+        return Ok(new CourierBillingAddressDto
+        {
+            Street = courier.BillingStreet,
+            Number = courier.BillingNumber,
+            Complement = courier.BillingComplement,
+            Neighborhood = courier.BillingNeighborhood,
+            City = courier.BillingCity,
+            State = courier.BillingState,
+            ZipCode = courier.BillingZipCode,
+            IsComplete = true
+        });
     }
 
     [HttpPatch("me/localizacao")]
@@ -222,7 +382,19 @@ public class RegisterCourierRequest
 {
     public string Name { get; set; } = string.Empty;
     public string? Document { get; set; }
+    public string? Cpf { get; set; }
+    public string? Cnh { get; set; }
     public string? Phone { get; set; }
+    public string? VehicleType { get; set; }
+    public string? VehicleModel { get; set; }
+    public string? VehiclePlate { get; set; }
+    public string? BillingStreet { get; set; }
+    public string? BillingNumber { get; set; }
+    public string? BillingComplement { get; set; }
+    public string? BillingNeighborhood { get; set; }
+    public string? BillingCity { get; set; }
+    public string? BillingState { get; set; }
+    public string? BillingZipCode { get; set; }
 }
 
 public class UpdateCourierStatusRequest
@@ -241,6 +413,22 @@ public class SaveCourierVehicleRequest
     public string Type { get; set; } = "Moto";
     public string Model { get; set; } = string.Empty;
     public string LicensePlate { get; set; } = string.Empty;
+}
+
+public class SaveCourierBillingAddressRequest
+{
+    public string Street { get; set; } = string.Empty;
+    public string Number { get; set; } = string.Empty;
+    public string? Complement { get; set; }
+    public string Neighborhood { get; set; } = string.Empty;
+    public string City { get; set; } = string.Empty;
+    public string State { get; set; } = string.Empty;
+    public string ZipCode { get; set; } = string.Empty;
+}
+
+public class CourierBillingAddressDto : SaveCourierBillingAddressRequest
+{
+    public bool IsComplete { get; set; }
 }
 
 public class UpdateLocationRequest

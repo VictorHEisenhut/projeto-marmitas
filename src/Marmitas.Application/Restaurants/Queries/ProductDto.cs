@@ -15,6 +15,13 @@ public class CreateCategoryRequest
     public int DisplayOrder { get; set; }
 }
 
+public class ProductAddonDto
+{
+    public string Name { get; set; } = string.Empty;
+    public decimal ExtraPrice { get; set; }
+    public int MaxQuantity { get; set; } = 1;
+}
+
 public class ProductDto
 {
     public Guid Id { get; set; }
@@ -26,6 +33,11 @@ public class ProductDto
     public decimal Price { get; set; }
     public bool IsActive { get; set; }
     public string? ImageUrl { get; set; }
+    public bool AvailableInPlans { get; set; } = true;
+    public bool AllowsCutlery { get; set; }
+    public bool CutleryHasExtraCost { get; set; }
+    public decimal CutleryPrice { get; set; }
+    public List<ProductAddonDto> Addons { get; set; } = new();
 }
 
 public class CreateProductRequest
@@ -35,6 +47,11 @@ public class CreateProductRequest
     public string Description { get; set; } = string.Empty;
     public decimal Price { get; set; }
     public string? ImageUrl { get; set; }
+    public bool AvailableInPlans { get; set; } = true;
+    public bool AllowsCutlery { get; set; }
+    public bool CutleryHasExtraCost { get; set; }
+    public decimal CutleryPrice { get; set; }
+    public List<ProductAddonDto> Addons { get; set; } = new();
 }
 
 public class UpdateProductAvailabilityRequest

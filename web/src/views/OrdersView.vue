@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Minus, Plus, RefreshCw, Star, Trash2 } from 'lucide-vue-next'
+import { AlertCircle, MessageSquareReply, Minus, Plus, RefreshCw, Star, Trash2 } from 'lucide-vue-next'
 import Navbar from '@/components/Navbar.vue'
 import { api, formatCurrency, getErrorMessage } from '@/services/api'
 import { useCartStore } from '@/stores/cart'
@@ -23,6 +23,10 @@ const reviewOrderId = ref<string | null>(null)
 const reviewRating = ref(5)
 const reviewComment = ref('')
 const sendingReview = ref(false)
+
+const complaintOrderId = ref<string | null>(null)
+const complaintText = ref('')
+const sendingComplaint = ref(false)
 
 const finalCartTotal = computed(() => {
   if (appliedCoupon.value && appliedCoupon.value.valid) {
@@ -92,9 +96,15 @@ async function handleCheckout() {
   try {
     const { data: created } = await api.post<CreateOrderResponse>('/pedidos', {
       restaurantId: cart.restaurantId,
+      isPlanRedemption: cart.isPlanRedemption,
       items: cart.items.map((item) => ({
         productId: item.productId,
         quantity: item.quantity,
+        wantsCutlery: Boolean(item.wantsCutlery),
+        selectedAddons: (item.selectedAddons || []).map((a) => ({
+          name: a.name,
+          quantity: a.quantity,
+        })),
       })),
     })
 
@@ -145,6 +155,31 @@ async function handleSubmitReview(orderId: string) {
     error.value = getErrorMessage(err, 'Não foi possível enviar a avaliação.')
   } finally {
     sendingReview.value = false
+  }
+}
+
+async function handleSubmitComplaint(orderId: string) {
+  error.value = ''
+  successMessage.value = ''
+
+  if (!complaintText.value.trim()) {
+    error.value = 'Descreva o motivo da sua reclamação.'
+    return
+  }
+
+  sendingComplaint.value = true
+  try {
+    await api.post(`/pedidos/${orderId}/reclamacao`, {
+      message: complaintText.value.trim(),
+    })
+    complaintOrderId.value = null
+    complaintText.value = ''
+    successMessage.value = 'Reclamação enviada ao restaurante! Acompanhe a resposta abaixo.'
+    await loadOrders()
+  } catch (err) {
+    error.value = getErrorMessage(err, 'Não foi possível registrar a reclamação.')
+  } finally {
+    sendingComplaint.value = false
   }
 }
 
@@ -216,8 +251,23 @@ onMounted(() => {
             class="flex items-center justify-between py-3"
           >
             <div>
-              <p class="font-medium text-stone-900">{{ item.name }}</p>
-              <p class="text-xs text-stone-500">{{ formatCurrency(item.price) }} cada</p>
+              <p class="font-medium text-stone-900">
+                {{ item.name }}
+                <span
+                  v-if="cart.isPlanRedemption"
+                  class="ml-1.5 rounded bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-800"
+                >
+                  Resgate do Plano (Base R$ 0,00)
+                </span>
+              </p>
+              <p class="text-xs text-stone-500">
+                {{ formatCurrency(cart.getItemEffectivePrice(item)) }} cada
+                <span v-if="item.selectedAddons && item.selectedAddons.length > 0">
+                  • Extras:
+                  {{ item.selectedAddons.map((a) => `${a.quantity}x ${a.name}`).join(', ') }}
+                </span>
+                <span v-if="item.wantsCutlery"> • Com talheres</span>
+              </p>
             </div>
 
             <div class="flex items-center gap-3">
@@ -242,7 +292,7 @@ onMounted(() => {
               </div>
 
               <span class="w-20 text-right text-sm font-semibold text-stone-900">
-                {{ formatCurrency(item.price * item.quantity) }}
+                {{ formatCurrency(cart.getItemEffectivePrice(item) * item.quantity) }}
               </span>
 
               <button
@@ -385,7 +435,87 @@ onMounted(() => {
                 <Star class="h-3.5 w-3.5 text-amber-500" />
                 Avaliar pedido
               </button>
+
+              <button
+                type="button"
+                class="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
+                @click="
+                  complaintOrderId = complaintOrderId === order.id ? null : order.id;
+                  complaintText = order.complaintMessage || '';
+                "
+              >
+                <AlertCircle class="h-3.5 w-3.5" />
+                {{ order.complaintMessage ? 'Atualizar reclamação' : 'Abrir reclamação' }}
+              </button>
             </div>
+
+            <!-- Exibição da Reclamação do Cliente e Resposta do Restaurante -->
+            <div
+              v-if="order.complaintMessage"
+              class="mt-4 space-y-2 rounded-lg border border-red-200 bg-red-50 p-3.5 text-xs"
+            >
+              <div class="flex items-center justify-between">
+                <span class="font-bold text-red-800">
+                  Sua Reclamação Registrada:
+                </span>
+                <span
+                  class="rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                  :class="
+                    order.complaintReply
+                      ? 'bg-green-100 text-green-800'
+                      : 'bg-amber-100 text-amber-800'
+                  "
+                >
+                  {{ order.complaintReply ? 'Respondida pelo restaurante' : 'Aguardando resposta do restaurante' }}
+                </span>
+              </div>
+              <p class="text-stone-800">{{ order.complaintMessage }}</p>
+
+              <div
+                v-if="order.complaintReply"
+                class="mt-2 rounded border border-green-200 bg-green-50 p-3 text-xs"
+              >
+                <div class="flex items-center gap-1.5 font-bold text-green-900">
+                  <MessageSquareReply class="h-3.5 w-3.5" />
+                  <span>Resposta do Restaurante ({{ order.restaurantName }}):</span>
+                </div>
+                <p class="mt-1 text-stone-800">{{ order.complaintReply }}</p>
+              </div>
+            </div>
+
+            <!-- Formulário para Abrir / Atualizar Reclamação -->
+            <form
+              v-if="complaintOrderId === order.id"
+              class="mt-4 space-y-3 rounded-lg border border-red-200 bg-stone-50 p-4"
+              @submit.prevent="handleSubmitComplaint(order.id)"
+            >
+              <label class="block text-xs font-bold text-stone-800">
+                Relatar problema ou reclamação ao restaurante ({{ order.restaurantName }}):
+              </label>
+              <textarea
+                v-model="complaintText"
+                rows="2"
+                required
+                placeholder="Descreva o problema ocorrido com seu pedido (ex: item faltando, atraso, embalagem)..."
+                class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm focus:border-brand-600 focus:outline-none"
+              />
+              <div class="flex gap-2">
+                <button
+                  type="submit"
+                  :disabled="sendingComplaint"
+                  class="rounded-lg bg-red-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {{ sendingComplaint ? 'Enviando...' : 'Enviar reclamação ao restaurante' }}
+                </button>
+                <button
+                  type="button"
+                  class="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs text-stone-600"
+                  @click="complaintOrderId = null"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
 
             <form
               v-if="reviewOrderId === order.id"

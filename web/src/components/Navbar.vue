@@ -1,12 +1,25 @@
 <script setup lang="ts">
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { LogOut, ShoppingCart, Utensils } from 'lucide-vue-next'
+import { LogOut, Moon, ShoppingCart, Sun, Utensils } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useCartStore } from '@/stores/cart'
+import { useThemeStore } from '@/stores/theme'
 
 const auth = useAuthStore()
 const cart = useCartStore()
+const theme = useThemeStore()
 const router = useRouter()
+
+const isDriverOnly = computed(
+  () =>
+    auth.hasRole(['driver']) &&
+    !auth.hasRole(['customer', 'restaurant_owner', 'admin', 'super_admin']),
+)
+
+onMounted(() => {
+  theme.initTheme()
+})
 
 async function handleLogout() {
   await auth.logout()
@@ -18,7 +31,10 @@ async function handleLogout() {
   <header class="border-b border-stone-200 bg-white">
     <div class="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
       <div class="flex items-center gap-6">
-        <RouterLink to="/" class="flex items-center gap-2 font-bold text-stone-900">
+        <RouterLink
+          :to="isDriverOnly ? '/entregador' : '/'"
+          class="flex items-center gap-2 font-bold text-stone-900"
+        >
           <span class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-white">
             <Utensils class="h-5 w-5" />
           </span>
@@ -26,13 +42,22 @@ async function handleLogout() {
         </RouterLink>
 
         <nav class="hidden items-center gap-4 text-sm font-medium text-stone-600 md:flex">
-          <RouterLink to="/" class="hover:text-brand-600">Início</RouterLink>
+          <RouterLink v-if="!isDriverOnly" to="/" class="hover:text-brand-600">
+            Início
+          </RouterLink>
           <RouterLink
-            v-if="auth.hasRole(['customer', 'admin', 'super_admin'])"
+            v-if="auth.hasRole(['customer', 'admin', 'super_admin']) && !isDriverOnly"
             to="/pedidos"
             class="hover:text-brand-600"
           >
             Pedidos
+          </RouterLink>
+          <RouterLink
+            v-if="auth.hasRole(['driver', 'admin', 'super_admin'])"
+            to="/entregador"
+            class="hover:text-brand-600"
+          >
+            Entregas
           </RouterLink>
           <RouterLink
             v-if="auth.isAuthenticated"
@@ -49,13 +74,6 @@ async function handleLogout() {
             Restaurante
           </RouterLink>
           <RouterLink
-            v-if="auth.hasRole(['driver', 'admin', 'super_admin'])"
-            to="/entregador"
-            class="hover:text-brand-600"
-          >
-            Entregas
-          </RouterLink>
-          <RouterLink
             v-if="auth.hasRole(['admin', 'super_admin'])"
             to="/admin"
             class="hover:text-brand-600"
@@ -66,8 +84,20 @@ async function handleLogout() {
       </div>
 
       <div class="flex items-center gap-3">
+        <button
+          type="button"
+          :title="theme.isDark ? 'Ativar modo claro' : 'Ativar modo noturno'"
+          :aria-label="theme.isDark ? 'Ativar modo claro' : 'Ativar modo noturno'"
+          class="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-xs font-medium text-stone-700 transition hover:bg-stone-100"
+          @click="theme.toggleTheme()"
+        >
+          <Sun v-if="theme.isDark" class="h-4 w-4 text-amber-400" />
+          <Moon v-else class="h-4 w-4 text-stone-600" />
+          <span class="hidden sm:inline">{{ theme.isDark ? 'Modo Claro' : 'Modo Noturno' }}</span>
+        </button>
+
         <RouterLink
-          v-if="cart.totalItems > 0"
+          v-if="cart.totalItems > 0 && !isDriverOnly"
           to="/pedidos"
           class="inline-flex items-center gap-1.5 rounded-lg bg-orange-50 px-3 py-1.5 text-sm font-semibold text-brand-700 hover:bg-orange-100"
         >

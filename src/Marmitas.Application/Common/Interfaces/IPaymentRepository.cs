@@ -16,6 +16,7 @@ public interface IPaymentRepository
     Task<Review?> GetReviewByIdAsync(Guid id);
     Task<List<Review>> GetReviewsByRestaurantIdAsync(Guid restaurantId);
     Task<List<Review>> GetReviewsByProductIdAsync(Guid productId);
+    Task<List<Review>> GetReviewsByTargetTypeAsync(string targetType);
     Task AddReviewAsync(Review review);
     void RemoveReview(Review review);
 

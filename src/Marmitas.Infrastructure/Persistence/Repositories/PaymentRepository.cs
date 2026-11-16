@@ -84,6 +84,14 @@ public class PaymentRepository : IPaymentRepository
         await _context.Reviews.AddAsync(review);
     }
 
+    public Task<List<Review>> GetReviewsByTargetTypeAsync(string targetType)
+    {
+        return _context.Reviews
+            .Where(r => r.TargetType == targetType)
+            .OrderByDescending(r => r.CreatedAt)
+            .ToListAsync();
+    }
+
     public void RemoveReview(Review review)
     {
         _context.Reviews.Remove(review);

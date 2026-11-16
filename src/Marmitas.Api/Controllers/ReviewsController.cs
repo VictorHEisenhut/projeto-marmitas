@@ -12,11 +12,111 @@ public class ReviewsController : ControllerBase
 {
     private readonly IPaymentRepository _payments;
     private readonly ICreateOrderService _orders;
+    private readonly IUserRepository _users;
+    private readonly IRestaurantRepository _restaurants;
 
-    public ReviewsController(IPaymentRepository payments, ICreateOrderService orders)
+    public ReviewsController(
+        IPaymentRepository payments,
+        ICreateOrderService orders,
+        IUserRepository users,
+        IRestaurantRepository restaurants)
     {
         _payments = payments;
         _orders = orders;
+        _users = users;
+        _restaurants = restaurants;
+    }
+
+    [HttpGet("api/avaliacoes/clientes")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetCustomerReviews()
+    {
+        var list = await _payments.GetReviewsByTargetTypeAsync("Customer");
+        return Ok(list);
+    }
+
+    [HttpPost("api/avaliacoes/clientes")]
+    [Authorize]
+    public async Task<IActionResult> AddCustomerReview([FromBody] CreateTypedReviewRequest request)
+    {
+        if (request.Rating < 1 || request.Rating > 5)
+            throw new Exception("A nota da avaliação deve ser entre 1 e 5.");
+
+        if (string.IsNullOrWhiteSpace(request.Comment))
+            throw new Exception("O comentário da avaliação é obrigatório.");
+
+        var userId = GetUserId();
+        var user = userId != Guid.Empty ? await _users.GetByIdAsync(userId) : null;
+
+        var restaurantName = request.RestaurantName?.Trim() ?? "Restaurante Parceiro";
+        if (request.RestaurantId.HasValue && request.RestaurantId.Value != Guid.Empty)
+        {
+            var rest = await _restaurants.GetByIdAsync(request.RestaurantId.Value);
+            if (rest != null) restaurantName = rest.Name;
+        }
+
+        var review = new Review
+        {
+            OrderId = request.OrderId ?? Guid.Empty,
+            RestaurantId = request.RestaurantId ?? Guid.Empty,
+            UserId = userId,
+            Rating = request.Rating,
+            Comment = request.Comment.Trim(),
+            TargetType = "Customer",
+            AuthorName = user?.Name ?? request.AuthorName ?? "Cliente Verificado",
+            RestaurantName = restaurantName
+        };
+
+        await _payments.AddReviewAsync(review);
+        await _payments.SaveChangesAsync();
+
+        return StatusCode(201, review);
+    }
+
+    [HttpGet("api/avaliacoes/entregadores")]
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> GetCourierReviews()
+    {
+        var list = await _payments.GetReviewsByTargetTypeAsync("Courier");
+        return Ok(list);
+    }
+
+    [HttpPost("api/avaliacoes/entregadores")]
+    [Authorize(Roles = "driver,admin,super_admin")]
+    public async Task<IActionResult> AddCourierReview([FromBody] CreateTypedReviewRequest request)
+    {
+        if (request.Rating < 1 || request.Rating > 5)
+            throw new Exception("A nota da avaliação deve ser entre 1 e 5.");
+
+        if (string.IsNullOrWhiteSpace(request.Comment))
+            throw new Exception("O comentário da avaliação do entregador é obrigatório.");
+
+        var userId = GetUserId();
+        var user = userId != Guid.Empty ? await _users.GetByIdAsync(userId) : null;
+
+        var restaurantName = request.RestaurantName?.Trim() ?? "Geral / Coleta";
+        if (request.RestaurantId.HasValue && request.RestaurantId.Value != Guid.Empty)
+        {
+            var rest = await _restaurants.GetByIdAsync(request.RestaurantId.Value);
+            if (rest != null) restaurantName = rest.Name;
+        }
+
+        var review = new Review
+        {
+            OrderId = request.OrderId ?? Guid.Empty,
+            RestaurantId = request.RestaurantId ?? Guid.Empty,
+            UserId = userId,
+            Rating = request.Rating,
+            Comment = request.Comment.Trim(),
+            TargetType = "Courier",
+            AuthorName = user?.Name ?? request.AuthorName ?? "Entregador Parceiro",
+            RestaurantName = restaurantName
+        };
+
+        await _payments.AddReviewAsync(review);
+        await _payments.SaveChangesAsync();
+
+        return StatusCode(201, review);
     }
 
     [HttpGet("api/pedidos/{id}/avaliacao")]
@@ -42,8 +142,9 @@ public class ReviewsController : ControllerBase
         if (existing != null)
             throw new Exception("Este pedido já possui uma avaliação.");
 
-        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
-        var userId = Guid.TryParse(sub, out var parsed) ? parsed : order.CustomerId;
+        var userId = GetUserId();
+        if (userId == Guid.Empty) userId = order.CustomerId;
+        var user = await _users.GetByIdAsync(userId);
 
         var review = new Review
         {
@@ -51,7 +152,10 @@ public class ReviewsController : ControllerBase
             RestaurantId = order.RestaurantId,
             UserId = userId,
             Rating = request.Rating,
-            Comment = request.Comment ?? string.Empty
+            Comment = request.Comment ?? string.Empty,
+            TargetType = "Customer",
+            AuthorName = user?.Name ?? order.CustomerName ?? "Cliente",
+            RestaurantName = order.RestaurantName
         };
 
         await _payments.AddReviewAsync(review);
@@ -106,10 +210,26 @@ public class ReviewsController : ControllerBase
         await _payments.SaveChangesAsync();
         return NoContent();
     }
+
+    private Guid GetUserId()
+    {
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        return Guid.TryParse(sub, out var parsed) ? parsed : Guid.Empty;
+    }
 }
 
 public class SaveReviewRequest
 {
     public int Rating { get; set; } = 5;
     public string? Comment { get; set; }
+}
+
+public class CreateTypedReviewRequest
+{
+    public Guid? OrderId { get; set; }
+    public Guid? RestaurantId { get; set; }
+    public string? RestaurantName { get; set; }
+    public string? AuthorName { get; set; }
+    public int Rating { get; set; } = 5;
+    public string Comment { get; set; } = string.Empty;
 }

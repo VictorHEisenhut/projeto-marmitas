@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Eye, EyeOff, Utensils } from 'lucide-vue-next'
-import { formatPhone, getErrorMessage } from '@/services/api'
+import { api, formatPhone, getErrorMessage } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -61,18 +61,22 @@ async function handleSubmit() {
       role: accountRole.value,
     })
 
-    try {
-      await auth.login({
-        email: email.value,
-        password: password.value,
-      })
-      await router.replace(auth.defaultRoute)
-    } catch {
-      await router.replace({
-        path: '/login',
-        query: { registered: 'true', email: email.value.trim().toLowerCase() },
-      })
+    if (accountRole.value === 'driver') {
+      try {
+        await api.post('/entregadores/registro', {
+          name: name.value.trim(),
+          document: '',
+          phone: phone.value.trim(),
+        })
+      } catch {
+        // Ignora caso já registrado
+      }
     }
+
+    await router.push({
+      path: '/login',
+      query: { registered: 'true', email: email.value.trim().toLowerCase() },
+    })
   } catch (err) {
     error.value = getErrorMessage(err, 'Não foi possível concluir o cadastro.')
   } finally {

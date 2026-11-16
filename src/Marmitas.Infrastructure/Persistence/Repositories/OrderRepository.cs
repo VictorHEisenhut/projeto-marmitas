@@ -23,6 +23,7 @@ public class OrderRepository : IOrderRepository
         return await _context.Orders
             .Include(o => o.Items)
             .Include(o => o.Restaurant)
+            .Include(o => o.Customer)
             .FirstOrDefaultAsync(o => o.Id == id);
     }
 
@@ -32,6 +33,7 @@ public class OrderRepository : IOrderRepository
             .AsNoTracking()
             .Include(o => o.Items)
             .Include(o => o.Restaurant)
+            .Include(o => o.Customer)
             .Where(o => o.CustomerId == customerId)
             .OrderByDescending(o => o.CreatedAt)
             .ToListAsync();
@@ -43,6 +45,7 @@ public class OrderRepository : IOrderRepository
             .AsNoTracking()
             .Include(o => o.Items)
             .Include(o => o.Restaurant)
+            .Include(o => o.Customer)
             .OrderByDescending(o => o.CreatedAt)
             .ToListAsync();
     }

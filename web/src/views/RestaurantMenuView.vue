@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowLeft, Heart, Plus, ShoppingCart } from 'lucide-vue-next'
+import { ArrowLeft, Heart, Plus, ShoppingCart, Sparkles } from 'lucide-vue-next'
 import Navbar from '@/components/Navbar.vue'
+import AiMarmitaAssistantModal from '@/components/AiMarmitaAssistantModal.vue'
 import { api, formatCurrency, getErrorMessage } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useCartStore } from '@/stores/cart'
@@ -12,20 +13,50 @@ const route = useRoute()
 const auth = useAuthStore()
 const cart = useCartStore()
 
+const isDriverOnly = computed(
+  () =>
+    auth.hasRole(['driver']) &&
+    !auth.hasRole(['customer', 'restaurant_owner', 'admin', 'super_admin']),
+)
+
 const restaurantId = computed(() => String(route.params.id || ''))
 const restaurant = ref<Restaurant | null>(null)
 const categories = ref<Category[]>([])
 const products = ref<Product[]>([])
 const selectedCategory = ref('')
+const isPlanMode = ref(cart.isPlanRedemption)
+const addonSelections = ref<Record<string, Record<string, number>>>({})
+const cutlerySelections = ref<Record<string, boolean>>({})
 const loading = ref(true)
 const error = ref('')
 const message = ref('')
+const isAiModalOpen = ref(false)
 
 const filteredProducts = computed(() => {
-  const active = products.value.filter((p) => p.isActive)
-  if (!selectedCategory.value) return active
-  return active.filter((p) => p.categoryId === selectedCategory.value)
+  let list = products.value.filter((p) => p.isActive)
+  if (isPlanMode.value) {
+    list = list.filter((p) => p.availableInPlans !== false)
+  }
+  if (!selectedCategory.value) return list
+  return list.filter((p) => p.categoryId === selectedCategory.value)
 })
+
+function togglePlanMode(enabled: boolean) {
+  isPlanMode.value = enabled
+  cart.setPlanMode(enabled)
+}
+
+function getAddonQty(productId: string, addonName: string): number {
+  return addonSelections.value[productId]?.[addonName] || 0
+}
+
+function setAddonQty(productId: string, addonName: string, qty: number, maxQty: number) {
+  const clamped = Math.max(0, Math.min(maxQty, qty))
+  if (!addonSelections.value[productId]) {
+    addonSelections.value[productId] = {}
+  }
+  addonSelections.value[productId][addonName] = clamped
+}
 
 async function loadMenu() {
   loading.value = true
@@ -49,8 +80,32 @@ async function loadMenu() {
 
 function handleAddToCart(product: Product) {
   if (!restaurant.value) return
-  cart.addItem(restaurant.value, product)
-  message.value = `"${product.name}" adicionada ao carrinho.`
+
+  const prodAddons = product.addons || []
+  const selectedAddons = prodAddons
+    .map((a) => ({
+      name: a.name,
+      extraPrice: a.extraPrice,
+      quantity: getAddonQty(product.id, a.name),
+    }))
+    .filter((a) => a.quantity > 0)
+
+  const wantsCutlery = Boolean(cutlerySelections.value[product.id] && product.allowsCutlery)
+
+  cart.addItem(restaurant.value, product, {
+    selectedAddons,
+    wantsCutlery,
+    isPlanRedemption: isPlanMode.value,
+  })
+
+  if (addonSelections.value[product.id]) {
+    addonSelections.value[product.id] = {}
+  }
+  cutlerySelections.value[product.id] = false
+
+  message.value = isPlanMode.value
+    ? `"${product.name}" adicionada para resgate no Plano Mensal.`
+    : `"${product.name}" adicionada ao carrinho.`
 }
 
 async function handleFavoriteRestaurant() {
@@ -110,19 +165,30 @@ onMounted(() => {
             </p>
           </div>
 
-          <button
-            v-if="auth.isAuthenticated"
-            type="button"
-            class="inline-flex items-center gap-1.5 self-start rounded-lg border border-stone-200 px-3.5 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
-            @click="handleFavoriteRestaurant"
-          >
-            <Heart class="h-4 w-4 text-red-500" />
-            Favoritar
-          </button>
+          <div class="flex items-center gap-2 self-start">
+            <button
+              type="button"
+              class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-brand-600 to-amber-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:from-brand-700 hover:to-amber-700"
+              @click="isAiModalOpen = true"
+            >
+              <Sparkles class="h-4 w-4" />
+              <span>Chef & Nutricionista IA</span>
+            </button>
+
+            <button
+              v-if="auth.isAuthenticated"
+              type="button"
+              class="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 px-3.5 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+              @click="handleFavoriteRestaurant"
+            >
+              <Heart class="h-4 w-4 text-red-500" />
+              Favoritar
+            </button>
+          </div>
         </div>
 
         <div
-          v-if="cart.totalItems > 0"
+          v-if="cart.totalItems > 0 && !isDriverOnly"
           class="flex flex-col items-start justify-between gap-3 rounded-xl border border-orange-200 bg-orange-50 p-4 sm:flex-row sm:items-center"
         >
           <div class="flex items-center gap-2 text-sm font-medium text-stone-800">
@@ -140,6 +206,41 @@ onMounted(() => {
           >
             Finalizar pedido
           </RouterLink>
+        </div>
+
+        <div
+          v-if="!isDriverOnly"
+          class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white p-4 shadow-sm"
+        >
+          <div class="text-sm font-semibold text-stone-800">
+            Modalidade de compra:
+          </div>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class="rounded-lg px-3.5 py-1.5 text-xs font-semibold transition"
+              :class="
+                !isPlanMode
+                  ? 'bg-brand-600 text-white'
+                  : 'border border-stone-200 bg-stone-50 text-stone-700 hover:bg-stone-100'
+              "
+              @click="togglePlanMode(false)"
+            >
+              Compra Avulsa (Individual)
+            </button>
+            <button
+              type="button"
+              class="rounded-lg px-3.5 py-1.5 text-xs font-semibold transition"
+              :class="
+                isPlanMode
+                  ? 'bg-green-700 text-white'
+                  : 'border border-stone-200 bg-stone-50 text-stone-700 hover:bg-stone-100'
+              "
+              @click="togglePlanMode(true)"
+            >
+              Plano Mensal (Resgate de Assinatura)
+            </button>
+          </div>
         </div>
 
         <div v-if="categories.length > 0" class="flex flex-wrap gap-2">
@@ -191,14 +292,79 @@ onMounted(() => {
               <p class="mt-1 text-sm text-stone-600">
                 {{ product.description || 'Marmita preparada no dia.' }}
               </p>
+
+              <div
+                v-if="product.addons && product.addons.length > 0"
+                class="mt-3 space-y-1.5 rounded-lg border border-stone-100 bg-stone-50 p-2.5"
+              >
+                <p class="text-[11px] font-semibold uppercase text-stone-500">Adicionais:</p>
+                <div
+                  v-for="addon in product.addons"
+                  :key="addon.name"
+                  class="flex items-center justify-between text-xs text-stone-700"
+                >
+                  <span>
+                    {{ addon.name }}
+                    <strong class="text-stone-900">
+                      ({{ addon.extraPrice > 0 ? `+${formatCurrency(addon.extraPrice)}` : 'Grátis' }})
+                    </strong>
+                    <span class="text-[10px] text-stone-400">máx. {{ addon.maxQuantity }}</span>
+                  </span>
+                  <div class="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      class="rounded border border-stone-300 bg-white px-1.5 py-0.5 text-xs font-bold"
+                      @click="setAddonQty(product.id, addon.name, getAddonQty(product.id, addon.name) - 1, addon.maxQuantity)"
+                    >
+                      -
+                    </button>
+                    <span class="w-4 text-center font-semibold">
+                      {{ getAddonQty(product.id, addon.name) }}
+                    </span>
+                    <button
+                      type="button"
+                      class="rounded border border-stone-300 bg-white px-1.5 py-0.5 text-xs font-bold"
+                      @click="setAddonQty(product.id, addon.name, getAddonQty(product.id, addon.name) + 1, addon.maxQuantity)"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="product.allowsCutlery" class="mt-2.5">
+                <label class="flex items-center gap-2 text-xs text-stone-700 cursor-pointer">
+                  <input
+                    v-model="cutlerySelections[product.id]"
+                    type="checkbox"
+                    class="h-3.5 w-3.5 rounded border-stone-300 text-brand-600 focus:ring-brand-600"
+                  />
+                  <span>
+                    Incluir talheres
+                    <strong>
+                      ({{
+                        product.cutleryHasExtraCost && product.cutleryPrice
+                          ? `+${formatCurrency(product.cutleryPrice)}`
+                          : 'Grátis'
+                      }})
+                    </strong>
+                  </span>
+                </label>
+              </div>
             </div>
 
             <div class="mt-4 flex items-center justify-between border-t border-stone-100 pt-4">
-              <span class="text-lg font-bold text-stone-900">
-                {{ formatCurrency(product.price) }}
-              </span>
+              <div>
+                <span class="text-lg font-bold text-stone-900">
+                  {{ isPlanMode ? 'R$ 0,00 (Plano)' : formatCurrency(product.price) }}
+                </span>
+                <p v-if="isPlanMode" class="text-[11px] text-green-700 font-medium">
+                  Valor base coberto pelo plano
+                </p>
+              </div>
 
               <button
+                v-if="!isDriverOnly"
                 type="button"
                 class="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-brand-700"
                 @click="handleAddToCart(product)"
@@ -206,6 +372,12 @@ onMounted(() => {
                 <Plus class="h-4 w-4" />
                 Adicionar
               </button>
+              <span
+                v-else
+                class="rounded bg-stone-100 px-2.5 py-1 text-[11px] font-medium text-stone-600"
+              >
+                Modo Consulta
+              </span>
             </div>
           </div>
         </div>
@@ -216,6 +388,15 @@ onMounted(() => {
         >
           Nenhuma marmita disponível nesta categoria.
         </div>
+
+        <AiMarmitaAssistantModal
+          :is-open="isAiModalOpen"
+          :restaurant-id="restaurant.id"
+          :restaurant-name="restaurant.name"
+          :available-products="products"
+          @close="isAiModalOpen = false"
+          @add-to-cart="handleAddToCart"
+        />
       </template>
     </main>
   </div>

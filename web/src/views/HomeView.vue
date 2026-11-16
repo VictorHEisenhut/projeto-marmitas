@@ -1,16 +1,24 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { Star } from 'lucide-vue-next'
 import Navbar from '@/components/Navbar.vue'
 import { api, formatCurrency, getErrorMessage } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
-import type { Plan, Restaurant } from '@/types'
+import type { Plan, Restaurant, ReviewItem } from '@/types'
 
 const auth = useAuthStore()
 const router = useRouter()
 
+const isDriverOnly = computed(
+  () =>
+    auth.hasRole(['driver']) &&
+    !auth.hasRole(['customer', 'restaurant_owner', 'admin', 'super_admin']),
+)
+
 const restaurants = ref<Restaurant[]>([])
 const plans = ref<Plan[]>([])
+const customerReviews = ref<ReviewItem[]>([])
 const loading = ref(true)
 const subscribingPlanId = ref<string | null>(null)
 const error = ref('')
@@ -21,12 +29,14 @@ async function fetchData() {
   error.value = ''
 
   try {
-    const [restRes, planRes] = await Promise.all([
+    const [restRes, planRes, revRes] = await Promise.all([
       api.get<Restaurant[]>('/restaurantes'),
       api.get<Plan[]>('/planos'),
+      api.get<ReviewItem[]>('/avaliacoes/clientes'),
     ])
     restaurants.value = restRes.data
     plans.value = planRes.data
+    customerReviews.value = revRes.data
   } catch (err) {
     error.value = getErrorMessage(err, 'Não foi possível carregar os dados.')
   } finally {
@@ -66,10 +76,14 @@ onMounted(() => {
     <main class="mx-auto max-w-6xl space-y-10 px-4 py-8 sm:px-6">
       <div class="rounded-xl border border-stone-200 bg-white p-6 shadow-sm sm:p-8">
         <h1 class="text-2xl font-bold text-stone-900 sm:text-3xl">
-          Marmitas frescas e planos de assinatura
+          {{ isDriverOnly ? 'Cardápios dos Restaurantes Parceiros' : 'Marmitas frescas e planos de assinatura' }}
         </h1>
         <p class="mt-2 max-w-2xl text-sm text-stone-600 sm:text-base">
-          Escolha um restaurante parceiro para pedir sua marmita de hoje ou assine um plano semanal.
+          {{
+            isDriverOnly
+              ? 'Consulte os cardápios dos restaurantes parceiros e acompanhe as avaliações dos clientes.'
+              : 'Escolha um restaurante parceiro para pedir sua marmita de hoje ou assine um plano semanal.'
+          }}
         </p>
       </div>
 
@@ -109,6 +123,9 @@ onMounted(() => {
               <p class="mt-1 text-sm text-stone-600">
                 {{ restaurant.description || 'Refeições preparadas diariamente.' }}
               </p>
+              <p v-if="restaurant.addressNeighborhood" class="mt-2 text-xs text-stone-500">
+                📍 Bairro {{ restaurant.addressNeighborhood }} — {{ restaurant.addressCity }}/{{ restaurant.addressState }}
+              </p>
             </div>
 
             <div class="mt-4 pt-2">
@@ -130,7 +147,7 @@ onMounted(() => {
         </div>
       </section>
 
-      <section class="space-y-4">
+      <section v-if="!isDriverOnly" class="space-y-4">
         <h2 class="text-lg font-bold text-stone-900">Planos de assinatura</h2>
 
         <p v-if="loading" class="text-sm text-stone-500">Carregando planos...</p>
@@ -175,6 +192,42 @@ onMounted(() => {
           class="rounded-xl border border-stone-200 bg-white p-6 text-center text-sm text-stone-500"
         >
           Nenhum plano ativo no momento.
+        </div>
+      </section>
+
+      <!-- Área de Avaliação de Clientes (Visível para TODOS os usuários) -->
+      <section class="space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <Star class="h-5 w-5 text-amber-500" />
+            <h2 class="text-lg font-bold text-stone-900">
+              Avaliações de Clientes
+            </h2>
+          </div>
+          <span class="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-800">
+            Mural Público
+          </span>
+        </div>
+
+        <div v-if="customerReviews.length > 0" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div
+            v-for="rev in customerReviews"
+            :key="rev.id"
+            class="rounded-xl border border-stone-200 bg-white p-5 shadow-sm space-y-2"
+          >
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-sm text-stone-900">
+                {{ rev.authorName || 'Cliente Verificado' }}
+              </span>
+              <span class="text-xs font-bold text-amber-600">
+                {{ '★'.repeat(rev.rating) }}{{ '☆'.repeat(5 - rev.rating) }}
+              </span>
+            </div>
+            <p class="text-xs font-semibold text-brand-700">
+              {{ rev.restaurantName || 'Restaurante Parceiro' }}
+            </p>
+            <p class="text-sm text-stone-600">{{ rev.comment }}</p>
+          </div>
         </div>
       </section>
     </main>

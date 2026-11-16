@@ -9,6 +9,11 @@ public class Product : Entity
     public decimal Price { get; set; }
     public bool IsActive { get; set; }
     public string? ImageUrl { get; set; }
+    public bool AvailableInPlans { get; set; } = true;
+    public bool AllowsCutlery { get; set; }
+    public bool CutleryHasExtraCost { get; set; }
+    public decimal CutleryPrice { get; set; }
+    public string AddonsJson { get; set; } = "[]";
     public DateTime? DeletedAt { get; set; }
 
     public Restaurant Restaurant { get; set; } = null!;

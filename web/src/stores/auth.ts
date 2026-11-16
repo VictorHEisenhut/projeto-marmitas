@@ -170,6 +170,7 @@ export const useAuthStore = defineStore('auth', () => {
       email: payload.email.trim().toLowerCase(),
       phone: payload.phone?.trim() || null,
       password: payload.password,
+      role: payload.role,
     })
     return data
   }

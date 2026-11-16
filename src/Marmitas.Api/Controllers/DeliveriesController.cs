@@ -12,24 +12,65 @@ public class DeliveriesController : ControllerBase
 {
     private readonly IDeliveryRepository _deliveries;
     private readonly ICreateOrderService _orders;
+    private readonly IRestaurantRepository _restaurants;
+    private readonly ICustomerProfileRepository _profiles;
 
-    public DeliveriesController(IDeliveryRepository deliveries, ICreateOrderService orders)
+    public DeliveriesController(
+        IDeliveryRepository deliveries,
+        ICreateOrderService orders,
+        IRestaurantRepository restaurants,
+        ICustomerProfileRepository profiles)
     {
         _deliveries = deliveries;
         _orders = orders;
+        _restaurants = restaurants;
+        _profiles = profiles;
+    }
+
+    private async Task<bool> IsCourierRegistrationCompleteAsync(Guid userId)
+    {
+        if (User.IsInRole("admin") || User.IsInRole("super_admin"))
+            return true;
+
+        var docs = await _deliveries.GetDocumentsByCourierAsync(userId);
+        var hasCpf = docs.Any(d => string.Equals(d.Type, "CPF", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(d.Number));
+        var hasCnh = docs.Any(d => string.Equals(d.Type, "CNH", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(d.Number));
+
+        var vehicles = await _deliveries.GetVehiclesByCourierAsync(userId);
+        var hasVehicle = vehicles.Any(v => !string.IsNullOrWhiteSpace(v.Model) && !string.IsNullOrWhiteSpace(v.LicensePlate));
+
+        var courier = await _deliveries.GetCourierByUserIdAsync(userId);
+        var hasBillingAddress = courier != null &&
+            !string.IsNullOrWhiteSpace(courier.BillingStreet) &&
+            !string.IsNullOrWhiteSpace(courier.BillingNumber) &&
+            !string.IsNullOrWhiteSpace(courier.BillingNeighborhood) &&
+            !string.IsNullOrWhiteSpace(courier.BillingCity) &&
+            !string.IsNullOrWhiteSpace(courier.BillingState) &&
+            !string.IsNullOrWhiteSpace(courier.BillingZipCode);
+
+        return hasCpf && hasCnh && hasVehicle && hasBillingAddress;
     }
 
     [HttpGet("api/entregas")]
     [Authorize(Roles = "driver,admin,super_admin")]
     public async Task<IActionResult> GetDeliveries()
     {
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        var userId = Guid.TryParse(sub, out var parsed) ? parsed : Guid.Empty;
+
+        if (userId != Guid.Empty && !await IsCourierRegistrationCompleteAsync(userId))
+        {
+            return Ok(Array.Empty<object>());
+        }
+
         var allOrders = await _orders.GetAllOrdersAsync();
         var existing = await _deliveries.GetAllDeliveriesAsync();
         var changed = false;
 
         foreach (var order in allOrders)
         {
-            if (!existing.Any(d => d.OrderId == order.Id))
+            var existingDelivery = existing.FirstOrDefault(d => d.OrderId == order.Id);
+            if (existingDelivery == null)
             {
                 await _deliveries.AddDeliveryAsync(new Delivery
                 {
@@ -38,13 +79,87 @@ public class DeliveriesController : ControllerBase
                 });
                 changed = true;
             }
+            else if (existingDelivery.CourierId == null && existingDelivery.Status != order.Status)
+            {
+                existingDelivery.Status = order.Status;
+                changed = true;
+            }
         }
 
         if (changed)
             await _deliveries.SaveChangesAsync();
 
         var updatedList = await _deliveries.GetAllDeliveriesAsync();
-        return Ok(updatedList);
+        var enrichedList = new List<object>();
+
+        var ordersById = allOrders.ToDictionary(o => o.Id, o => o);
+        var restaurantCache = new Dictionary<Guid, Restaurant?>();
+        var customerAddressCache = new Dictionary<Guid, List<Address>>();
+
+        foreach (var d in updatedList)
+        {
+            var restaurantName = "Restaurante Parceiro";
+            var restaurantAddress = string.Empty;
+            var deliveryNeighborhood = "Centro";
+            var deliveryAddress = "Região Central - São Paulo/SP";
+
+            if (ordersById.TryGetValue(d.OrderId, out var order))
+            {
+                if (!string.IsNullOrWhiteSpace(order.RestaurantName))
+                {
+                    restaurantName = order.RestaurantName;
+                }
+
+                if (!restaurantCache.TryGetValue(order.RestaurantId, out var rest))
+                {
+                    rest = await _restaurants.GetByIdAsync(order.RestaurantId);
+                    restaurantCache[order.RestaurantId] = rest;
+                }
+
+                if (rest != null)
+                {
+                    restaurantName = rest.Name;
+                    if (!string.IsNullOrWhiteSpace(rest.AddressStreet))
+                    {
+                        restaurantAddress = $"{rest.AddressStreet}, {rest.AddressNumber} - {rest.AddressNeighborhood}, {rest.AddressCity}/{rest.AddressState}";
+                    }
+                }
+
+                if (!customerAddressCache.TryGetValue(order.CustomerId, out var addrs))
+                {
+                    addrs = await _profiles.GetAddressesByUserAsync(order.CustomerId);
+                    customerAddressCache[order.CustomerId] = addrs;
+                }
+
+                var mainAddr = addrs.FirstOrDefault(a => a.IsMain) ?? addrs.FirstOrDefault();
+                if (mainAddr != null && !string.IsNullOrWhiteSpace(mainAddr.Neighborhood))
+                {
+                    deliveryNeighborhood = mainAddr.Neighborhood;
+                    deliveryAddress = $"{mainAddr.Street}, {mainAddr.Number} - {mainAddr.Neighborhood}, {mainAddr.City}/{mainAddr.State}";
+                }
+                else if (rest != null && !string.IsNullOrWhiteSpace(rest.AddressNeighborhood))
+                {
+                    deliveryNeighborhood = rest.AddressNeighborhood;
+                    deliveryAddress = $"Região {rest.AddressNeighborhood} - {rest.AddressCity}/{rest.AddressState}";
+                }
+            }
+
+            enrichedList.Add(new
+            {
+                id = d.Id,
+                orderId = d.OrderId,
+                courierId = d.CourierId,
+                status = d.Status,
+                createdAt = d.CreatedAt,
+                updatedAt = d.UpdatedAt,
+                restaurantName,
+                restaurantAddress,
+                deliveryNeighborhood,
+                deliveryAddress
+            });
+        }
+
+        return Ok(enrichedList);
     }
 
     [HttpGet("api/entregas/{id}")]
@@ -74,6 +189,11 @@ public class DeliveriesController : ControllerBase
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         var courierId = Guid.TryParse(sub, out var parsed) ? parsed : Guid.Empty;
 
+        if (courierId != Guid.Empty && !await IsCourierRegistrationCompleteAsync(courierId))
+        {
+            throw new Exception("Complete seu cadastro obrigatório (CPF, CNH, Veículo e Endereço de Cobrança) antes de aceitar entregas.");
+        }
+
         var delivery = await _deliveries.GetDeliveryByIdOrOrderAsync(id);
         if (delivery == null)
         {
@@ -85,6 +205,7 @@ public class DeliveriesController : ControllerBase
         delivery.CourierId = courierId;
         delivery.Status = "DriverAssigned";
         await _deliveries.SaveChangesAsync();
+        await _orders.UpdateStatusAsync(delivery.OrderId, "DriverAssigned");
 
         return Ok(delivery);
     }
@@ -103,6 +224,7 @@ public class DeliveriesController : ControllerBase
 
         delivery.Status = request.Status;
         await _deliveries.SaveChangesAsync();
+        await _orders.UpdateStatusAsync(delivery.OrderId, request.Status);
 
         return Ok(delivery);
     }

@@ -9,6 +9,11 @@ public class Order : Entity
     public decimal TotalAmount { get; set; }
     public OrderStatus Status { get; set; }
 
+    public string? ComplaintMessage { get; set; }
+    public DateTime? ComplaintCreatedAt { get; set; }
+    public string? ComplaintReply { get; set; }
+    public DateTime? ComplaintRepliedAt { get; set; }
+
     public User Customer { get; set; } = null!;
     public Restaurant Restaurant { get; set; } = null!;
 
@@ -34,4 +39,3 @@ public class Order : Entity
         TotalAmount = Items.Sum(i => i.TotalPrice);
     }
 }
-

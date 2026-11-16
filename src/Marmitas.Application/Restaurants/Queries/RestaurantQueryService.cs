@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Marmitas.Application.Common.Interfaces;
 using Marmitas.Domain.Entities;
 using Marmitas.Domain.Enums;
@@ -57,7 +58,17 @@ public class RestaurantQueryService : IRestaurantQueryService
             throw new Exception("O nome do restaurante é obrigatório.");
 
         if (string.IsNullOrWhiteSpace(request.Document))
-            throw new Exception("O CNPJ/CPF do restaurante é obrigatório.");
+            throw new Exception("O CNPJ do restaurante é obrigatório.");
+
+        if (string.IsNullOrWhiteSpace(request.AddressStreet) ||
+            string.IsNullOrWhiteSpace(request.AddressNumber) ||
+            string.IsNullOrWhiteSpace(request.AddressNeighborhood) ||
+            string.IsNullOrWhiteSpace(request.AddressCity) ||
+            string.IsNullOrWhiteSpace(request.AddressState) ||
+            string.IsNullOrWhiteSpace(request.AddressZipCode))
+        {
+            throw new Exception("O endereço completo do restaurante (CEP, Rua, Número, Bairro, Cidade e UF) é obrigatório.");
+        }
 
         var resolvedOwnerId = request.OwnerId.HasValue && request.OwnerId.Value != Guid.Empty
             ? request.OwnerId.Value
@@ -69,7 +80,14 @@ public class RestaurantQueryService : IRestaurantQueryService
             request.Document,
             resolvedOwnerId)
         {
-            ImageUrl = request.ImageUrl
+            ImageUrl = request.ImageUrl,
+            AddressStreet = request.AddressStreet.Trim(),
+            AddressNumber = request.AddressNumber.Trim(),
+            AddressComplement = request.AddressComplement?.Trim(),
+            AddressNeighborhood = request.AddressNeighborhood.Trim(),
+            AddressCity = request.AddressCity.Trim(),
+            AddressState = request.AddressState.Trim().ToUpperInvariant(),
+            AddressZipCode = request.AddressZipCode.Trim()
         };
 
         restaurant.Approve();
@@ -90,11 +108,30 @@ public class RestaurantQueryService : IRestaurantQueryService
         if (string.IsNullOrWhiteSpace(request.Name))
             throw new Exception("O nome do restaurante é obrigatório.");
 
+        if (string.IsNullOrWhiteSpace(request.Document))
+            throw new Exception("O CNPJ do restaurante é obrigatório.");
+
+        if (string.IsNullOrWhiteSpace(request.AddressStreet) ||
+            string.IsNullOrWhiteSpace(request.AddressNumber) ||
+            string.IsNullOrWhiteSpace(request.AddressNeighborhood) ||
+            string.IsNullOrWhiteSpace(request.AddressCity) ||
+            string.IsNullOrWhiteSpace(request.AddressState) ||
+            string.IsNullOrWhiteSpace(request.AddressZipCode))
+        {
+            throw new Exception("O endereço completo do restaurante (CEP, Rua, Número, Bairro, Cidade e UF) é obrigatório.");
+        }
+
         restaurant.Name = request.Name.Trim();
         restaurant.Description = (request.Description ?? string.Empty).Trim();
-        if (!string.IsNullOrWhiteSpace(request.Document))
-            restaurant.Document = request.Document.Trim();
+        restaurant.Document = request.Document.Trim();
         restaurant.ImageUrl = request.ImageUrl;
+        restaurant.AddressStreet = request.AddressStreet.Trim();
+        restaurant.AddressNumber = request.AddressNumber.Trim();
+        restaurant.AddressComplement = request.AddressComplement?.Trim();
+        restaurant.AddressNeighborhood = request.AddressNeighborhood.Trim();
+        restaurant.AddressCity = request.AddressCity.Trim();
+        restaurant.AddressState = request.AddressState.Trim().ToUpperInvariant();
+        restaurant.AddressZipCode = request.AddressZipCode.Trim();
 
         if (request.OwnerId.HasValue && request.OwnerId.Value != Guid.Empty)
         {
@@ -244,13 +281,18 @@ public class RestaurantQueryService : IRestaurantQueryService
         return products.Select(MapProduct).ToList();
     }
 
+    private static readonly HashSet<string> AllowedCategories = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Tradicionais",
+        "Fitness & Low Carb",
+        "Executiva",
+        "Vegetariana & Vegana",
+        "Bebidas & Sobremesas"
+    };
+
     public async Task<ProductDto> CreateProductAsync(Guid restaurantId, CreateProductRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.Name))
-            throw new Exception("O nome do produto é obrigatório.");
-
-        if (request.Price <= 0)
-            throw new Exception("O preço do produto deve ser maior que zero.");
+        ValidateProductRequest(request);
 
         var restaurant = await _restaurantRepository.GetByIdAsync(restaurantId);
         if (restaurant == null)
@@ -260,13 +302,26 @@ public class RestaurantQueryService : IRestaurantQueryService
         if (category == null || (category.RestaurantId.HasValue && category.RestaurantId != restaurantId))
             throw new Exception("Categoria não encontrada para este restaurante.");
 
+        if (!AllowedCategories.Contains(category.Name.Trim()))
+            throw new Exception("Categoria inválida. Categorias permitidas: Tradicionais, Fitness & Low Carb, Executiva, Vegetariana & Vegana, Bebidas & Sobremesas.");
+
+        var sanitizedAddons = SanitizeAddons(request.Addons);
+        var cutleryPrice = request.AllowsCutlery && request.CutleryHasExtraCost ? request.CutleryPrice : 0m;
+
         var product = new Product(
             restaurantId,
             request.CategoryId,
             request.Name,
-            request.Description ?? string.Empty,
+            request.Description,
             request.Price,
-            request.ImageUrl);
+            request.ImageUrl)
+        {
+            AvailableInPlans = request.AvailableInPlans,
+            AllowsCutlery = request.AllowsCutlery,
+            CutleryHasExtraCost = request.AllowsCutlery && request.CutleryHasExtraCost,
+            CutleryPrice = cutleryPrice,
+            AddonsJson = JsonSerializer.Serialize(sanitizedAddons)
+        };
 
         await _restaurantRepository.AddProductAsync(product);
         await _restaurantRepository.SaveChangesAsync();
@@ -281,22 +336,72 @@ public class RestaurantQueryService : IRestaurantQueryService
         if (product == null)
             throw new Exception("Marmita/Produto não encontrado.");
 
-        if (string.IsNullOrWhiteSpace(request.Name))
-            throw new Exception("O nome do produto é obrigatório.");
-
-        if (request.Price <= 0)
-            throw new Exception("O preço do produto deve ser maior que zero.");
+        ValidateProductRequest(request);
 
         if (request.CategoryId != Guid.Empty)
+        {
+            var category = await _restaurantRepository.GetCategoryByIdAsync(request.CategoryId);
+            if (category == null || !AllowedCategories.Contains(category.Name.Trim()))
+                throw new Exception("Categoria inválida.");
             product.CategoryId = request.CategoryId;
+        }
+
+        var sanitizedAddons = SanitizeAddons(request.Addons);
 
         product.Name = request.Name.Trim();
-        product.Description = (request.Description ?? string.Empty).Trim();
+        product.Description = request.Description.Trim();
         product.Price = request.Price;
         product.ImageUrl = request.ImageUrl;
+        product.AvailableInPlans = request.AvailableInPlans;
+        product.AllowsCutlery = request.AllowsCutlery;
+        product.CutleryHasExtraCost = request.AllowsCutlery && request.CutleryHasExtraCost;
+        product.CutleryPrice = request.AllowsCutlery && request.CutleryHasExtraCost ? request.CutleryPrice : 0m;
+        product.AddonsJson = JsonSerializer.Serialize(sanitizedAddons);
 
         await _restaurantRepository.SaveChangesAsync();
         return MapProduct(product);
+    }
+
+    private static void ValidateProductRequest(CreateProductRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name))
+            throw new Exception("O nome da marmita é obrigatório.");
+
+        if (string.IsNullOrWhiteSpace(request.Description))
+            throw new Exception("A descrição da marmita é obrigatória.");
+
+        if (request.CategoryId == Guid.Empty)
+            throw new Exception("A categoria é obrigatória.");
+
+        if (request.Price <= 0)
+            throw new Exception("O valor avulso da marmita deve ser maior que zero.");
+
+        if (request.AllowsCutlery && request.CutleryHasExtraCost && request.CutleryPrice <= 0)
+            throw new Exception("Informe um valor maior que zero para o custo extra de talheres.");
+
+        if (request.Addons != null)
+        {
+            foreach (var addon in request.Addons)
+            {
+                if (string.IsNullOrWhiteSpace(addon.Name))
+                    throw new Exception("Todos os adicionais devem possuir um nome.");
+                if (addon.ExtraPrice < 0)
+                    throw new Exception($"O valor extra do adicional '{addon.Name}' não pode ser negativo.");
+                if (addon.MaxQuantity <= 0)
+                    throw new Exception($"O limite máximo do adicional '{addon.Name}' deve ser de pelo menos 1.");
+            }
+        }
+    }
+
+    private static List<ProductAddonDto> SanitizeAddons(List<ProductAddonDto>? addons)
+    {
+        if (addons == null) return new List<ProductAddonDto>();
+        return addons.Select(a => new ProductAddonDto
+        {
+            Name = a.Name.Trim(),
+            ExtraPrice = a.ExtraPrice,
+            MaxQuantity = a.MaxQuantity
+        }).ToList();
     }
 
     public async Task<ProductDto> ChangeProductAvailabilityAsync(Guid id, bool isActive)
@@ -333,19 +438,47 @@ public class RestaurantQueryService : IRestaurantQueryService
         Document = r.Document,
         ImageUrl = r.ImageUrl,
         Status = r.Status.ToString(),
-        OwnerId = r.OwnerId
+        OwnerId = r.OwnerId,
+        AddressStreet = r.AddressStreet,
+        AddressNumber = r.AddressNumber,
+        AddressComplement = r.AddressComplement,
+        AddressNeighborhood = r.AddressNeighborhood,
+        AddressCity = r.AddressCity,
+        AddressState = r.AddressState,
+        AddressZipCode = r.AddressZipCode
     };
 
-    private static ProductDto MapProduct(Product p) => new()
+    private static ProductDto MapProduct(Product p)
     {
-        Id = p.Id,
-        RestaurantId = p.RestaurantId,
-        CategoryId = p.CategoryId,
-        CategoryName = p.Category != null ? p.Category.Name : string.Empty,
-        Name = p.Name,
-        Description = p.Description,
-        Price = p.Price,
-        IsActive = p.IsActive,
-        ImageUrl = p.ImageUrl
-    };
+        List<ProductAddonDto> addons = new();
+        if (!string.IsNullOrWhiteSpace(p.AddonsJson))
+        {
+            try
+            {
+                addons = JsonSerializer.Deserialize<List<ProductAddonDto>>(p.AddonsJson) ?? new();
+            }
+            catch
+            {
+                addons = new();
+            }
+        }
+
+        return new ProductDto
+        {
+            Id = p.Id,
+            RestaurantId = p.RestaurantId,
+            CategoryId = p.CategoryId,
+            CategoryName = p.Category != null ? p.Category.Name : string.Empty,
+            Name = p.Name,
+            Description = p.Description,
+            Price = p.Price,
+            IsActive = p.IsActive,
+            ImageUrl = p.ImageUrl,
+            AvailableInPlans = p.AvailableInPlans,
+            AllowsCutlery = p.AllowsCutlery,
+            CutleryHasExtraCost = p.CutleryHasExtraCost,
+            CutleryPrice = p.CutleryPrice,
+            Addons = addons
+        };
+    }
 }

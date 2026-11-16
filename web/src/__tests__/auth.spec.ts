@@ -4,6 +4,20 @@ import { formatPhone, getErrorMessage } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useCartStore } from '@/stores/cart'
 
+if (typeof globalThis.localStorage === 'undefined' || typeof globalThis.localStorage?.clear !== 'function') {
+  const store = new Map<string, string>()
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => store.set(key, String(value)),
+      removeItem: (key: string) => store.delete(key),
+      clear: () => store.clear(),
+    },
+    configurable: true,
+    writable: true,
+  })
+}
+
 describe('services/api helpers', () => {
   it('formata telefone brasileiro com 10 e 11 dígitos', () => {
     expect(formatPhone('11988887777')).toBe('(11) 98888-7777')
