@@ -4,6 +4,9 @@ public class CreateOrderRequest
 {
     public Guid RestaurantId { get; set; }
     public bool IsPlanRedemption { get; set; }
+    public Guid? AddressId { get; set; }
+    public string? DeliveryAddress { get; set; }
+    public string? CouponCode { get; set; }
     public List<OrderItemRequest> Items { get; set; } = new();
 }
 
@@ -20,4 +23,3 @@ public class OrderItemAddonRequest
     public string Name { get; set; } = string.Empty;
     public int Quantity { get; set; }
 }
-

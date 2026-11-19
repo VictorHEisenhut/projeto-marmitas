@@ -24,6 +24,34 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (axios.isAxiosError(error) && error.response?.status === 401) {
+      const url = error.config?.url || ''
+      const isAuthEndpoint =
+        url.includes('/auth/login') ||
+        url.includes('/auth/refresh-token') ||
+        url.includes('/auth/logout')
+
+      if (!isAuthEndpoint) {
+        const raw = localStorage.getItem(STORAGE_KEY)
+        if (raw) {
+          try {
+            const session = JSON.parse(raw)
+            if (!session?.expiresAt || Date.now() >= Date.parse(session.expiresAt)) {
+              localStorage.removeItem(STORAGE_KEY)
+            }
+          } catch {
+            localStorage.removeItem(STORAGE_KEY)
+          }
+        }
+      }
+    }
+    return Promise.reject(error)
+  },
+)
+
 export function getErrorMessage(error: unknown, fallback = 'Ocorreu um erro inesperado.'): string {
   if (axios.isAxiosError(error)) {
     const data = error.response?.data as

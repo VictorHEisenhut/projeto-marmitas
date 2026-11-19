@@ -8,6 +8,7 @@ const route = useRoute()
 const router = useRouter()
 
 const email = ref(typeof route.query.email === 'string' ? route.query.email : '')
+const resetCode = ref(typeof route.query.code === 'string' ? route.query.code : '')
 const newPassword = ref('')
 const confirmPassword = ref('')
 const showPassword = ref(false)
@@ -37,6 +38,7 @@ async function handleSubmit() {
     await api.post('/auth/redefinir-senha', {
       email: email.value.trim().toLowerCase(),
       newPassword: newPassword.value,
+      resetCode: resetCode.value.trim() || undefined,
     })
 
     await router.push({
@@ -92,6 +94,20 @@ async function handleSubmit() {
               required
               placeholder="seu@email.com"
               class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600"
+            />
+          </div>
+
+          <div>
+            <label for="resetCode" class="block text-sm font-medium text-stone-700">
+              Código de verificação
+            </label>
+            <input
+              id="resetCode"
+              v-model="resetCode"
+              type="text"
+              maxlength="10"
+              placeholder="Código de 6 dígitos"
+              class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 font-mono text-sm text-stone-900 focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600"
             />
           </div>
 

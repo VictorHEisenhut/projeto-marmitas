@@ -1,14 +1,26 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { AlertCircle, MessageSquareReply, Minus, Plus, RefreshCw, Star, Trash2 } from 'lucide-vue-next'
+import { AlertCircle, MapPin, MessageSquareReply, Minus, Plus, RefreshCw, Star, Trash2, Truck } from 'lucide-vue-next'
 import Navbar from '@/components/Navbar.vue'
 import { api, formatCurrency, getErrorMessage } from '@/services/api'
 import { useCartStore } from '@/stores/cart'
-import type { CouponValidationResponse, CreateOrderResponse, Order } from '@/types'
+import type {
+  Address,
+  CouponValidationResponse,
+  CreateOrderResponse,
+  DeliveryTracking,
+  Order,
+  Plan,
+  Subscription,
+} from '@/types'
 
 const cart = useCartStore()
 
 const orders = ref<Order[]>([])
+const addresses = ref<Address[]>([])
+const selectedAddressId = ref('')
+const activeSubscription = ref<Subscription | null>(null)
+const weeklyPlanLimit = ref<number | null>(null)
 const loading = ref(true)
 const submittingOrder = ref(false)
 const validatingCoupon = ref(false)
@@ -19,6 +31,20 @@ const couponCode = ref('')
 const appliedCoupon = ref<CouponValidationResponse | null>(null)
 const paymentMethod = ref('PIX')
 
+const usedPlanMealsThisWeek = computed(() => {
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000
+  return orders.value
+    .filter((o) => o.status !== 'Cancelled' && new Date(o.createdAt).getTime() >= cutoff)
+    .flatMap((o) => o.items || [])
+    .filter((i) => i.productName.toUpperCase().startsWith('[PLANO]'))
+    .reduce((acc, i) => acc + i.quantity, 0)
+})
+
+const remainingPlanMeals = computed(() => {
+  if (weeklyPlanLimit.value === null) return null
+  return Math.max(0, weeklyPlanLimit.value - usedPlanMealsThisWeek.value)
+})
+
 const reviewOrderId = ref<string | null>(null)
 const reviewRating = ref(5)
 const reviewComment = ref('')
@@ -27,6 +53,41 @@ const sendingReview = ref(false)
 const complaintOrderId = ref<string | null>(null)
 const complaintText = ref('')
 const sendingComplaint = ref(false)
+
+const trackingOrderId = ref<string | null>(null)
+const trackingInfo = ref<DeliveryTracking | null>(null)
+const loadingTracking = ref(false)
+
+function getTrackingStep(status: string): number {
+  if (status === 'Delivered') return 4
+  if (status === 'InTransit' || status === 'DriverAssigned') return 3
+  if (status === 'Preparing' || status === 'ReadyForPickup') return 2
+  return 1
+}
+
+async function handleToggleTracking(order: Order) {
+  if (trackingOrderId.value === order.id) {
+    trackingOrderId.value = null
+    trackingInfo.value = null
+    return
+  }
+
+  trackingOrderId.value = order.id
+  loadingTracking.value = true
+  try {
+    const { data } = await api.get<DeliveryTracking>(`/entregas/${order.id}/rastreamento`)
+    trackingInfo.value = data
+  } catch {
+    trackingInfo.value = {
+      deliveryId: order.id,
+      orderId: order.id,
+      status: order.status,
+      updatedAt: order.updatedAt,
+    }
+  } finally {
+    loadingTracking.value = false
+  }
+}
 
 const finalCartTotal = computed(() => {
   if (appliedCoupon.value && appliedCoupon.value.valid) {
@@ -56,8 +117,35 @@ async function loadOrders() {
   error.value = ''
 
   try {
-    const { data } = await api.get<Order[]>('/pedidos')
-    orders.value = data
+    const [ordersRes, addrRes, subsRes, plansRes] = await Promise.allSettled([
+      api.get<Order[]>('/pedidos'),
+      api.get<Address[]>('/usuarios/me/enderecos'),
+      api.get<Subscription[]>('/assinaturas'),
+      api.get<Plan[]>('/planos'),
+    ])
+
+    if (ordersRes.status === 'fulfilled') {
+      orders.value = ordersRes.value.data
+    }
+
+    if (addrRes.status === 'fulfilled') {
+      addresses.value = addrRes.value.data
+      const mainAddr = addresses.value.find((a) => a.isMain) || addresses.value[0]
+      if (mainAddr && !selectedAddressId.value) {
+        selectedAddressId.value = mainAddr.id
+      }
+    }
+
+    if (subsRes.status === 'fulfilled') {
+      const active = subsRes.value.data.find((s) => s.status === 'Active') || null
+      activeSubscription.value = active
+      if (active && plansRes.status === 'fulfilled') {
+        const plan = plansRes.value.data.find((p) => p.id === active.planId)
+        weeklyPlanLimit.value = plan?.mealsPerWeek ?? 5
+      } else {
+        weeklyPlanLimit.value = null
+      }
+    }
   } catch (err) {
     error.value = getErrorMessage(err, 'Não foi possível carregar seus pedidos.')
   } finally {
@@ -91,12 +179,20 @@ async function handleCheckout() {
   if (!cart.restaurantId || cart.items.length === 0) return
   error.value = ''
   successMessage.value = ''
+
+  if (addresses.value.length > 0 && !selectedAddressId.value) {
+    error.value = 'Selecione um endereço de entrega para continuar.'
+    return
+  }
+
   submittingOrder.value = true
 
   try {
     const { data: created } = await api.post<CreateOrderResponse>('/pedidos', {
       restaurantId: cart.restaurantId,
       isPlanRedemption: cart.isPlanRedemption,
+      addressId: selectedAddressId.value || undefined,
+      couponCode: appliedCoupon.value?.valid ? appliedCoupon.value.code : undefined,
       items: cart.items.map((item) => ({
         productId: item.productId,
         quantity: item.quantity,
@@ -306,11 +402,59 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="mt-4 grid gap-4 border-t border-stone-100 pt-4 sm:grid-cols-2">
+        <div class="mt-4 space-y-4 border-t border-stone-100 pt-4">
+          <div
+            v-if="activeSubscription && weeklyPlanLimit !== null"
+            class="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-3.5 py-2.5 text-xs text-green-800"
+          >
+            <span>
+              <strong>{{ activeSubscription.planName }}:</strong>
+              você utilizou {{ usedPlanMealsThisWeek }} de {{ weeklyPlanLimit }} marmitas nos últimos 7 dias.
+            </span>
+            <span class="font-bold">
+              {{ remainingPlanMeals }} disponível(is)
+            </span>
+          </div>
+
           <div class="space-y-2">
-            <label class="block text-xs font-semibold uppercase text-stone-500">
-              Cupom de desconto
+            <label class="flex items-center justify-between text-xs font-semibold uppercase text-stone-500">
+              <span class="inline-flex items-center gap-1">
+                <MapPin class="h-3.5 w-3.5 text-brand-600" />
+                Endereço de entrega
+              </span>
+              <RouterLink to="/conta" class="text-[11px] font-medium text-brand-600 hover:underline">
+                Gerenciar endereços
+              </RouterLink>
             </label>
+
+            <select
+              v-if="addresses.length > 0"
+              v-model="selectedAddressId"
+              class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-800 focus:border-brand-600 focus:outline-none"
+            >
+              <option v-for="addr in addresses" :key="addr.id" :value="addr.id">
+                {{ addr.street }}, {{ addr.number }}
+                {{ addr.complement ? `(${addr.complement})` : '' }} — {{ addr.neighborhood }},
+                {{ addr.city }}/{{ addr.state }} {{ addr.isMain ? '[Principal]' : '' }}
+              </option>
+            </select>
+
+            <div
+              v-else
+              class="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+            >
+              <span>Nenhum endereço cadastrado na sua conta.</span>
+              <RouterLink to="/conta" class="font-semibold underline">
+                Cadastrar endereço
+              </RouterLink>
+            </div>
+          </div>
+
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div class="space-y-2">
+              <label class="block text-xs font-semibold uppercase text-stone-500">
+                Cupom de desconto
+              </label>
             <div class="flex gap-2">
               <input
                 v-model="couponCode"
@@ -345,6 +489,7 @@ onMounted(() => {
               <option value="CreditCard">Cartão de Crédito</option>
               <option value="DebitCard">Cartão de Débito</option>
             </select>
+          </div>
           </div>
         </div>
 
@@ -387,9 +532,19 @@ onMounted(() => {
                   Pedido #{{ order.id.slice(0, 8) }} •
                   {{ new Date(order.createdAt).toLocaleString('pt-BR') }}
                 </p>
+                <p v-if="order.deliveryAddress" class="mt-0.5 inline-flex items-center gap-1 text-xs text-stone-500">
+                  <MapPin class="h-3 w-3 text-stone-400" />
+                  {{ order.deliveryAddress }}
+                </p>
               </div>
 
               <div class="flex items-center gap-3">
+                <span
+                  v-if="order.couponCode"
+                  class="rounded bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-800"
+                >
+                  Cupom {{ order.couponCode }} (-{{ formatCurrency(order.discountAmount || 0) }})
+                </span>
                 <span
                   class="rounded-full px-2.5 py-0.5 text-xs font-semibold"
                   :class="
@@ -430,6 +585,16 @@ onMounted(() => {
                 v-if="order.status !== 'Cancelled'"
                 type="button"
                 class="inline-flex items-center gap-1 rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50"
+                @click="handleToggleTracking(order)"
+              >
+                <Truck class="h-3.5 w-3.5 text-brand-600" />
+                {{ trackingOrderId === order.id ? 'Ocultar rastreio' : 'Rastrear entrega' }}
+              </button>
+
+              <button
+                v-if="order.status !== 'Cancelled'"
+                type="button"
+                class="inline-flex items-center gap-1 rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50"
                 @click="reviewOrderId = reviewOrderId === order.id ? null : order.id"
               >
                 <Star class="h-3.5 w-3.5 text-amber-500" />
@@ -447,6 +612,34 @@ onMounted(() => {
                 <AlertCircle class="h-3.5 w-3.5" />
                 {{ order.complaintMessage ? 'Atualizar reclamação' : 'Abrir reclamação' }}
               </button>
+            </div>
+
+            <!-- Painel de Rastreamento de Entrega -->
+            <div
+              v-if="trackingOrderId === order.id"
+              class="mt-4 rounded-lg border border-stone-200 bg-stone-50 p-4 text-xs"
+            >
+              <div class="flex items-center justify-between">
+                <span class="font-bold text-stone-900">Acompanhamento da Entrega</span>
+                <span v-if="trackingInfo" class="text-stone-500">
+                  Atualizado: {{ new Date(trackingInfo.updatedAt).toLocaleTimeString('pt-BR') }}
+                </span>
+              </div>
+
+              <div class="mt-3 grid grid-cols-4 gap-2 text-center">
+                <div
+                  v-for="(label, idx) in ['Recebido', 'Em preparo', 'Em rota', 'Entregue']"
+                  :key="label"
+                  class="rounded-lg border px-2 py-2 font-medium"
+                  :class="
+                    getTrackingStep(order.status) >= idx + 1
+                      ? 'border-green-300 bg-green-100 text-green-900'
+                      : 'border-stone-200 bg-white text-stone-400'
+                  "
+                >
+                  {{ idx + 1 }}. {{ label }}
+                </div>
+              </div>
             </div>
 
             <!-- Exibição da Reclamação do Cliente e Resposta do Restaurante -->

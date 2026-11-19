@@ -38,6 +38,8 @@ export const useAuthStore = defineStore('auth', () => {
   const initialized = ref(false)
 
   let refreshTimer: ReturnType<typeof setTimeout> | null = null
+  let refreshPromise: Promise<boolean> | null = null
+  let visibilityBound = false
 
   const isAuthenticated = computed(() => {
     if (!accessToken.value || !user.value || !expiresAt.value) return false
@@ -112,21 +114,47 @@ export const useAuthStore = defineStore('auth', () => {
       return false
     }
 
-    try {
-      const { data } = await api.post<LoginResponse>('/auth/refresh-token', {
-        email: user.value?.email,
-      })
-      setSession(data)
-      return true
-    } catch {
-      clearSession()
-      return false
-    }
+    if (refreshPromise) return refreshPromise
+
+    refreshPromise = (async () => {
+      try {
+        const { data } = await api.post<LoginResponse>('/auth/refresh-token', {
+          email: user.value?.email,
+        })
+        setSession(data)
+        return true
+      } catch {
+        clearSession()
+        return false
+      } finally {
+        refreshPromise = null
+      }
+    })()
+
+    return refreshPromise
+  }
+
+  function bindVisibilityListener() {
+    if (visibilityBound || typeof document === 'undefined') return
+    visibilityBound = true
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return
+      if (!accessToken.value || !expiresAt.value) return
+
+      const remainingMs = new Date(expiresAt.value).getTime() - Date.now()
+      if (remainingMs <= 0) {
+        clearSession()
+      } else if (remainingMs <= 90_000) {
+        void refreshToken()
+      }
+    })
   }
 
   async function init() {
     if (initialized.value) return
     initialized.value = true
+    bindVisibilityListener()
 
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return

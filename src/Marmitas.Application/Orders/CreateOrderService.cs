@@ -24,11 +24,19 @@ public class CreateOrderService : ICreateOrderService
 {
     private readonly IRestaurantRepository _restaurantRepository;
     private readonly IOrderRepository _orderRepository;
+    private readonly ISubscriptionRepository? _subscriptionRepository;
+    private readonly ICustomerProfileRepository? _profileRepository;
 
-    public CreateOrderService(IRestaurantRepository restaurantRepository, IOrderRepository orderRepository)
+    public CreateOrderService(
+        IRestaurantRepository restaurantRepository,
+        IOrderRepository orderRepository,
+        ISubscriptionRepository? subscriptionRepository = null,
+        ICustomerProfileRepository? profileRepository = null)
     {
         _restaurantRepository = restaurantRepository;
         _orderRepository = orderRepository;
+        _subscriptionRepository = subscriptionRepository;
+        _profileRepository = profileRepository;
     }
 
     public async Task<CreateOrderResponse> ExecuteAsync(Guid customerId, CreateOrderRequest request)
@@ -49,19 +57,68 @@ public class CreateOrderService : ICreateOrderService
         if (activeProducts.Count() != productIds.Count)
             throw new Exception("Um ou mais produtos não existem, não pertencem ao restaurante ou estão inativos.");
 
+        if (request.IsPlanRedemption && _subscriptionRepository != null)
+        {
+            var userSubs = await _subscriptionRepository.GetSubscriptionsByUserAsync(customerId);
+            var activeSub = userSubs.FirstOrDefault(s =>
+                string.Equals(s.Status, "Active", StringComparison.OrdinalIgnoreCase));
+
+            if (activeSub == null)
+                throw new Exception("Você não possui um plano de assinatura ativo para resgatar marmitas.");
+
+            var plan = await _subscriptionRepository.GetPlanByIdAsync(activeSub.PlanId);
+            var weeklyLimit = plan?.MealsPerWeek ?? 5;
+
+            var myOrders = await _orderRepository.GetByCustomerIdAsync(customerId);
+            var weekCutoff = DateTime.UtcNow.AddDays(-7);
+            var usedMealsThisWeek = myOrders
+                .Where(o => o.Status != OrderStatus.Cancelled && o.CreatedAt >= weekCutoff)
+                .SelectMany(o => o.Items)
+                .Where(i => i.ProductName.StartsWith("[PLANO]", StringComparison.OrdinalIgnoreCase))
+                .Sum(i => i.Quantity);
+
+            var requestedMeals = request.Items.Sum(i => i.Quantity);
+            if (usedMealsThisWeek + requestedMeals > weeklyLimit)
+            {
+                var remaining = Math.Max(0, weeklyLimit - usedMealsThisWeek);
+                throw new Exception(
+                    $"Limite semanal do seu plano atingido ({weeklyLimit} marmitas/semana). Você já utilizou {usedMealsThisWeek} e possui {remaining} disponível(is) nesta semana.");
+            }
+        }
+
         var order = new Order(customerId, request.RestaurantId);
+
+        if (!string.IsNullOrWhiteSpace(request.DeliveryAddress))
+        {
+            order.DeliveryAddress = request.DeliveryAddress.Trim();
+        }
+        else if (request.AddressId.HasValue && request.AddressId.Value != Guid.Empty && _profileRepository != null)
+        {
+            var addr = await _profileRepository.GetAddressByIdAsync(request.AddressId.Value, customerId);
+            if (addr != null)
+            {
+                order.DeliveryAddress = FormatAddress(addr);
+            }
+        }
+        else if (_profileRepository != null)
+        {
+            var addrs = await _profileRepository.GetAddressesByUserAsync(customerId);
+            var mainAddr = addrs.FirstOrDefault(a => a.IsMain) ?? addrs.FirstOrDefault();
+            if (mainAddr != null)
+            {
+                order.DeliveryAddress = FormatAddress(mainAddr);
+            }
+        }
 
         foreach (var itemRequest in request.Items)
         {
             var product = activeProducts.First(p => p.Id == itemRequest.ProductId);
 
-            // Validação Crucial 1 (Plano Mensal): Somente marmitas com AvailableInPlans == true
             if (request.IsPlanRedemption && !product.AvailableInPlans)
             {
                 throw new Exception($"A marmita '{product.Name}' não está disponível para resgate no plano mensal.");
             }
 
-            // Validação de Talheres
             if (itemRequest.WantsCutlery && !product.AllowsCutlery)
             {
                 throw new Exception($"O prato '{product.Name}' não permite opção de talheres.");
@@ -71,7 +128,6 @@ public class CreateOrderService : ICreateOrderService
                 ? product.CutleryPrice
                 : 0m;
 
-            // Validação e cálculo dos Adicionais Dinâmicos
             var productAddons = DeserializeAddons(product.AddonsJson);
             var addonsCost = 0m;
             var detailsSuffix = new List<string>();
@@ -99,9 +155,6 @@ public class CreateOrderService : ICreateOrderService
                 detailsSuffix.Add(cutleryCost > 0 ? "Com talher (extra)" : "Com talher (grátis)");
             }
 
-            // Validação Crucial 2 e 3:
-            // Modalidade Avulsa: Valor da Marmita + Adicionais + Talher
-            // Modalidade Plano Mensal: Base = 0 (coberto pelo plano) + apenas Adicionais pagos e Talher cobrado
             var basePrice = request.IsPlanRedemption ? 0m : product.Price;
             var finalUnitPrice = basePrice + addonsCost + cutleryCost;
 
@@ -118,15 +171,49 @@ public class CreateOrderService : ICreateOrderService
             order.AddItem(orderItem);
         }
 
+        if (!string.IsNullOrWhiteSpace(request.CouponCode) && _subscriptionRepository != null)
+        {
+            var coupon = await _subscriptionRepository.GetCouponByCodeAsync(request.CouponCode);
+            if (coupon == null || coupon.ExpiresAt < DateTime.UtcNow)
+                throw new Exception("O cupom informado é inválido ou expirou.");
+
+            order.ApplyCoupon(coupon.Code, coupon.DiscountPercentage);
+            await _subscriptionRepository.AddCouponUsageAsync(new CouponUsage
+            {
+                CouponId = coupon.Id,
+                UserId = customerId,
+                UsedAt = DateTime.UtcNow
+            });
+        }
+
         await _orderRepository.AddAsync(order);
+        if (_profileRepository != null)
+        {
+            await _profileRepository.AddNotificationAsync(new Notification
+            {
+                UserId = customerId,
+                Title = "Pedido confirmado!",
+                Message = $"Seu pedido no restaurante {restaurant.Name} foi recebido ({order.TotalAmount:C2}).",
+                IsRead = false
+            });
+        }
         await _orderRepository.SaveChangesAsync();
 
         return new CreateOrderResponse
         {
             OrderId = order.Id,
             TotalAmount = order.TotalAmount,
+            DiscountAmount = order.DiscountAmount,
+            CouponCode = order.CouponCode,
+            DeliveryAddress = order.DeliveryAddress,
             Status = order.Status.ToString()
         };
+    }
+
+    private static string FormatAddress(Address addr)
+    {
+        var comp = string.IsNullOrWhiteSpace(addr.Complement) ? string.Empty : $" ({addr.Complement})";
+        return $"{addr.Street}, {addr.Number}{comp} - {addr.Neighborhood}, {addr.City}/{addr.State} - CEP {addr.ZipCode}";
     }
 
     public async Task<List<OrderDto>> GetMyOrdersAsync(Guid customerId)
@@ -184,6 +271,16 @@ public class CreateOrderService : ICreateOrderService
             throw new Exception("Status de pedido inválido.");
 
         order.Status = parsedStatus;
+        if (_profileRepository != null)
+        {
+            await _profileRepository.AddNotificationAsync(new Notification
+            {
+                UserId = order.CustomerId,
+                Title = "Atualização do pedido",
+                Message = $"O status do seu pedido #{order.Id.ToString()[..8]} mudou para {parsedStatus}.",
+                IsRead = false
+            });
+        }
         await _orderRepository.SaveChangesAsync();
 
         return MapOrder(order);
@@ -229,6 +326,9 @@ public class CreateOrderService : ICreateOrderService
         RestaurantId = o.RestaurantId,
         RestaurantName = o.Restaurant != null ? o.Restaurant.Name : string.Empty,
         TotalAmount = o.TotalAmount,
+        DiscountAmount = o.DiscountAmount,
+        CouponCode = o.CouponCode,
+        DeliveryAddress = o.DeliveryAddress,
         Status = o.Status.ToString(),
         CreatedAt = o.CreatedAt,
         UpdatedAt = o.UpdatedAt,

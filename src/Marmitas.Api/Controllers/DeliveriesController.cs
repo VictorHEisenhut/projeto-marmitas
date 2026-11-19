@@ -132,7 +132,12 @@ public class DeliveriesController : ControllerBase
                 }
 
                 var mainAddr = addrs.FirstOrDefault(a => a.IsMain) ?? addrs.FirstOrDefault();
-                if (mainAddr != null && !string.IsNullOrWhiteSpace(mainAddr.Neighborhood))
+                if (!string.IsNullOrWhiteSpace(order.DeliveryAddress))
+                {
+                    deliveryAddress = order.DeliveryAddress;
+                    deliveryNeighborhood = mainAddr?.Neighborhood ?? "Entrega";
+                }
+                else if (mainAddr != null && !string.IsNullOrWhiteSpace(mainAddr.Neighborhood))
                 {
                     deliveryNeighborhood = mainAddr.Neighborhood;
                     deliveryAddress = $"{mainAddr.Street}, {mainAddr.Number} - {mainAddr.Neighborhood}, {mainAddr.City}/{mainAddr.State}";

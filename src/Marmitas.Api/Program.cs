@@ -146,6 +146,9 @@ using (var scope = app.Services.CreateScope())
             WHERE EXISTS (SELECT 1 FROM users WHERE id = '55555555-5555-5555-5555-555555555555')
             ON CONFLICT (id) DO NOTHING;
 
+            ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_address TEXT;
+            ALTER TABLE orders ADD COLUMN IF NOT EXISTS coupon_code VARCHAR(50);
+            ALTER TABLE orders ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(10,2) NOT NULL DEFAULT 0.00;
             ALTER TABLE orders ADD COLUMN IF NOT EXISTS complaint_message TEXT;
             ALTER TABLE orders ADD COLUMN IF NOT EXISTS complaint_created_at TIMESTAMPTZ;
             ALTER TABLE orders ADD COLUMN IF NOT EXISTS complaint_reply TEXT;

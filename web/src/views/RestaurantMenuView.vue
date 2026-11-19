@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowLeft, Heart, Plus, ShoppingCart, Sparkles } from 'lucide-vue-next'
+import { ArrowLeft, Heart, Plus, Search, ShoppingCart, Sparkles } from 'lucide-vue-next'
 import Navbar from '@/components/Navbar.vue'
 import AiMarmitaAssistantModal from '@/components/AiMarmitaAssistantModal.vue'
 import { api, formatCurrency, getErrorMessage } from '@/services/api'
@@ -24,6 +24,7 @@ const restaurant = ref<Restaurant | null>(null)
 const categories = ref<Category[]>([])
 const products = ref<Product[]>([])
 const selectedCategory = ref('')
+const searchDish = ref('')
 const isPlanMode = ref(cart.isPlanRedemption)
 const addonSelections = ref<Record<string, Record<string, number>>>({})
 const cutlerySelections = ref<Record<string, boolean>>({})
@@ -37,8 +38,18 @@ const filteredProducts = computed(() => {
   if (isPlanMode.value) {
     list = list.filter((p) => p.availableInPlans !== false)
   }
-  if (!selectedCategory.value) return list
-  return list.filter((p) => p.categoryId === selectedCategory.value)
+  if (selectedCategory.value) {
+    list = list.filter((p) => p.categoryId === selectedCategory.value)
+  }
+  const q = searchDish.value.trim().toLowerCase()
+  if (q) {
+    list = list.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        (p.description && p.description.toLowerCase().includes(q)),
+    )
+  }
+  return list
 })
 
 function togglePlanMode(enabled: boolean) {
@@ -243,33 +254,45 @@ onMounted(() => {
           </div>
         </div>
 
-        <div v-if="categories.length > 0" class="flex flex-wrap gap-2">
-          <button
-            type="button"
-            class="rounded-lg px-3.5 py-1.5 text-sm font-medium transition"
-            :class="
-              selectedCategory === ''
-                ? 'bg-stone-900 text-white'
-                : 'border border-stone-200 bg-white text-stone-700 hover:bg-stone-100'
-            "
-            @click="selectedCategory = ''"
-          >
-            Todas
-          </button>
-          <button
-            v-for="cat in categories"
-            :key="cat.id"
-            type="button"
-            class="rounded-lg px-3.5 py-1.5 text-sm font-medium transition"
-            :class="
-              selectedCategory === cat.id
-                ? 'bg-stone-900 text-white'
-                : 'border border-stone-200 bg-white text-stone-700 hover:bg-stone-100'
-            "
-            @click="selectedCategory = cat.id"
-          >
-            {{ cat.name }}
-          </button>
+        <div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+          <div v-if="categories.length > 0" class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              class="rounded-lg px-3.5 py-1.5 text-sm font-medium transition"
+              :class="
+                selectedCategory === ''
+                  ? 'bg-stone-900 text-white'
+                  : 'border border-stone-200 bg-white text-stone-700 hover:bg-stone-100'
+              "
+              @click="selectedCategory = ''"
+            >
+              Todas
+            </button>
+            <button
+              v-for="cat in categories"
+              :key="cat.id"
+              type="button"
+              class="rounded-lg px-3.5 py-1.5 text-sm font-medium transition"
+              :class="
+                selectedCategory === cat.id
+                  ? 'bg-stone-900 text-white'
+                  : 'border border-stone-200 bg-white text-stone-700 hover:bg-stone-100'
+              "
+              @click="selectedCategory = cat.id"
+            >
+              {{ cat.name }}
+            </button>
+          </div>
+
+          <div class="relative w-full sm:w-64">
+            <Search class="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-stone-400" />
+            <input
+              v-model="searchDish"
+              type="search"
+              placeholder="Buscar prato ou ingrediente..."
+              class="w-full rounded-lg border border-stone-300 bg-white py-1.5 pl-9 pr-3 text-xs text-stone-900 focus:border-brand-600 focus:outline-none"
+            />
+          </div>
         </div>
 
         <div
@@ -282,6 +305,17 @@ onMounted(() => {
             class="flex flex-col justify-between rounded-xl border border-stone-200 bg-white p-5 shadow-sm"
           >
             <div>
+              <div
+                v-if="product.imageUrl"
+                class="mb-3 h-36 w-full overflow-hidden rounded-lg bg-stone-100"
+              >
+                <img
+                  :src="product.imageUrl"
+                  :alt="product.name"
+                  class="h-full w-full object-cover"
+                />
+              </div>
+
               <span
                 v-if="product.categoryName"
                 class="inline-block rounded bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-600"

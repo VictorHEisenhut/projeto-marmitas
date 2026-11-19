@@ -37,7 +37,10 @@ function goToReset() {
   if (!result.value) return
   void router.push({
     path: '/redefinir-senha',
-    query: { email: result.value.email },
+    query: {
+      email: result.value.email,
+      code: result.value.resetCode || undefined,
+    },
   })
 }
 </script>
@@ -66,6 +69,9 @@ function goToReset() {
           <div class="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
             <p class="font-semibold">{{ result.message }}</p>
             <p class="mt-1 text-xs text-green-700">Conta: {{ result.email }}</p>
+            <p v-if="result.resetCode" class="mt-2 rounded bg-white/80 px-2.5 py-1.5 font-mono text-xs font-bold text-stone-900">
+              Código de verificação: {{ result.resetCode }}
+            </p>
           </div>
 
           <button

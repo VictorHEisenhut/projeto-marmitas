@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Claims;
 using Marmitas.Application.Common.Interfaces;
 using Marmitas.Application.Users;
@@ -11,6 +12,8 @@ namespace Marmitas.Api.Controllers;
 [ApiController]
 public class AuthController : ControllerBase
 {
+    private static readonly ConcurrentDictionary<string, (string Code, DateTime ExpiresAt)> ResetCodes = new();
+
     private readonly IRegisterUserService _registerUser;
     private readonly ILoginService _login;
     private readonly IUserRepository _users;
@@ -93,10 +96,14 @@ public class AuthController : ControllerBase
         if (user == null)
             throw new Exception("Usuário não encontrado com este e-mail.");
 
+        var code = Random.Shared.Next(100000, 999999).ToString();
+        ResetCodes[user.Email] = (code, DateTime.UtcNow.AddMinutes(15));
+
         return Ok(new
         {
             message = "Solicitação de redefinição de senha registrada com sucesso.",
-            email = user.Email
+            email = user.Email,
+            resetCode = code
         });
     }
 
@@ -113,6 +120,22 @@ public class AuthController : ControllerBase
         var user = await _users.GetByEmailAsync(request.Email.Trim().ToLower());
         if (user == null)
             throw new Exception("Usuário não encontrado.");
+
+        if (ResetCodes.TryGetValue(user.Email, out var entry))
+        {
+            if (entry.ExpiresAt < DateTime.UtcNow)
+            {
+                ResetCodes.TryRemove(user.Email, out _);
+                throw new Exception("O código de verificação expirou. Solicite um novo código.");
+            }
+
+            if (string.IsNullOrWhiteSpace(request.ResetCode) || request.ResetCode.Trim() != entry.Code)
+            {
+                throw new Exception("Código de verificação inválido.");
+            }
+
+            ResetCodes.TryRemove(user.Email, out _);
+        }
 
         user.PasswordHash = _passwordHasher.Hash(request.NewPassword);
         await _users.SaveChangesAsync();

@@ -4,6 +4,9 @@ public class CreateOrderResponse
 {
     public Guid OrderId { get; set; }
     public decimal TotalAmount { get; set; }
+    public decimal DiscountAmount { get; set; }
+    public string? CouponCode { get; set; }
+    public string? DeliveryAddress { get; set; }
     public string Status { get; set; } = string.Empty;
 }
 
@@ -25,6 +28,9 @@ public class OrderDto
     public Guid RestaurantId { get; set; }
     public string RestaurantName { get; set; } = string.Empty;
     public decimal TotalAmount { get; set; }
+    public decimal DiscountAmount { get; set; }
+    public string? CouponCode { get; set; }
+    public string? DeliveryAddress { get; set; }
     public string Status { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

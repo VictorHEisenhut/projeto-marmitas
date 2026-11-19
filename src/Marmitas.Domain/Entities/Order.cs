@@ -9,6 +9,10 @@ public class Order : Entity
     public decimal TotalAmount { get; set; }
     public OrderStatus Status { get; set; }
 
+    public string? DeliveryAddress { get; set; }
+    public string? CouponCode { get; set; }
+    public decimal DiscountAmount { get; set; }
+
     public string? ComplaintMessage { get; set; }
     public DateTime? ComplaintCreatedAt { get; set; }
     public string? ComplaintReply { get; set; }
@@ -34,8 +38,17 @@ public class Order : Entity
         CalculateTotal();
     }
 
+    public void ApplyCoupon(string code, decimal discountPercentage)
+    {
+        var subtotal = Items.Sum(i => i.TotalPrice);
+        CouponCode = code.Trim().ToUpperInvariant();
+        DiscountAmount = Math.Round(subtotal * (discountPercentage / 100m), 2);
+        TotalAmount = Math.Max(0m, subtotal - DiscountAmount);
+    }
+
     private void CalculateTotal()
     {
-        TotalAmount = Items.Sum(i => i.TotalPrice);
+        var subtotal = Items.Sum(i => i.TotalPrice);
+        TotalAmount = Math.Max(0m, subtotal - DiscountAmount);
     }
 }

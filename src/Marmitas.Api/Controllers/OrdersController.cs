@@ -14,11 +14,16 @@ public class OrdersController : ControllerBase
 {
     private readonly ICreateOrderService _createOrderService;
     private readonly IDeliveryRepository _deliveries;
+    private readonly IRestaurantRepository _restaurants;
 
-    public OrdersController(ICreateOrderService createOrderService, IDeliveryRepository deliveries)
+    public OrdersController(
+        ICreateOrderService createOrderService,
+        IDeliveryRepository deliveries,
+        IRestaurantRepository restaurants)
     {
         _createOrderService = createOrderService;
         _deliveries = deliveries;
+        _restaurants = restaurants;
     }
 
     [HttpGet]
@@ -31,6 +36,13 @@ public class OrdersController : ControllerBase
 
         if (restaurantId.HasValue && restaurantId.Value != Guid.Empty)
         {
+            if (!User.IsInRole("admin") && !User.IsInRole("super_admin"))
+            {
+                var rest = await _restaurants.GetByIdAsync(restaurantId.Value);
+                if (rest == null || rest.OwnerId != customerId)
+                    return Forbid();
+            }
+
             var allOrders = await _createOrderService.GetAllOrdersAsync();
             var restaurantOrders = allOrders.Where(o => o.RestaurantId == restaurantId.Value).ToList();
             return Ok(restaurantOrders);
@@ -45,6 +57,9 @@ public class OrdersController : ControllerBase
     public async Task<IActionResult> GetById(Guid id)
     {
         var order = await _createOrderService.GetByIdAsync(id);
+        if (!IsOwnerOrAdmin(order.CustomerId))
+            return Forbid();
+
         return Ok(order);
     }
 
@@ -64,6 +79,10 @@ public class OrdersController : ControllerBase
     [Authorize(Roles = "customer,admin,super_admin")]
     public async Task<IActionResult> Cancel(Guid id)
     {
+        var existing = await _createOrderService.GetByIdAsync(id);
+        if (!IsOwnerOrAdmin(existing.CustomerId))
+            return Forbid();
+
         var order = await _createOrderService.CancelAsync(id);
         return Ok(order);
     }
@@ -119,6 +138,10 @@ public class OrdersController : ControllerBase
     [Authorize(Roles = "customer,admin,super_admin")]
     public async Task<IActionResult> SubmitComplaint(Guid id, [FromBody] SubmitOrderComplaintRequest request)
     {
+        var existing = await _createOrderService.GetByIdAsync(id);
+        if (!IsOwnerOrAdmin(existing.CustomerId))
+            return Forbid();
+
         var order = await _createOrderService.SubmitComplaintAsync(id, request.Message);
         return Ok(order);
     }
@@ -129,5 +152,14 @@ public class OrdersController : ControllerBase
     {
         var order = await _createOrderService.ReplyComplaintAsync(id, request.Reply);
         return Ok(order);
+    }
+
+    private bool IsOwnerOrAdmin(Guid customerId)
+    {
+        if (User.IsInRole("admin") || User.IsInRole("super_admin"))
+            return true;
+
+        var subClaim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        return Guid.TryParse(subClaim, out var currentUserId) && currentUserId == customerId;
     }
 }

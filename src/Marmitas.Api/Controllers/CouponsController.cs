@@ -99,18 +99,6 @@ public class CouponsController : ControllerBase
         if (coupon == null || coupon.ExpiresAt < DateTime.UtcNow)
             throw new Exception("Cupom inválido ou expirado.");
 
-        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
-        if (Guid.TryParse(sub, out var userId))
-        {
-            await _subscriptions.AddCouponUsageAsync(new CouponUsage
-            {
-                CouponId = coupon.Id,
-                UserId = userId,
-                UsedAt = DateTime.UtcNow
-            });
-            await _subscriptions.SaveChangesAsync();
-        }
-
         var discount = Math.Round(request.OrderAmount * (coupon.DiscountPercentage / 100m), 2);
         return Ok(new
         {

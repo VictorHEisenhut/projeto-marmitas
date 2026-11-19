@@ -126,6 +126,10 @@ public class SubscriptionsController : ControllerBase
         var sub = await _subscriptions.GetSubscriptionByIdAsync(id);
         if (sub == null)
             throw new Exception("Assinatura não encontrada.");
+
+        if (!User.IsInRole("admin") && !User.IsInRole("super_admin") && sub.UserId != GetUserId())
+            throw new Exception("Você não tem permissão para acessar esta assinatura.");
+
         return sub;
     }
 

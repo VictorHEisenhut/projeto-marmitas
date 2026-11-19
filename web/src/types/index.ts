@@ -38,11 +38,13 @@ export interface LoginResponse {
 export interface ForgotPasswordResponse {
   message: string
   email: string
+  resetCode?: string
 }
 
 export interface ResetPasswordRequest {
   email: string
   newPassword: string
+  resetCode?: string
 }
 
 export interface Restaurant {
@@ -148,6 +150,9 @@ export interface Order {
   restaurantId: string
   restaurantName: string
   totalAmount: number
+  discountAmount?: number
+  couponCode?: string | null
+  deliveryAddress?: string | null
   status: string
   createdAt: string
   updatedAt: string
@@ -174,6 +179,9 @@ export interface ReviewItem {
 export interface CreateOrderResponse {
   orderId: string
   totalAmount: number
+  discountAmount?: number
+  couponCode?: string | null
+  deliveryAddress?: string | null
   status: string
 }
 
@@ -255,6 +263,67 @@ export interface AdminDashboard {
   totalRestaurants: number
   totalOrders: number
   totalRevenue: number
+}
+
+export interface Coupon {
+  id: string
+  code: string
+  discountPercentage: number
+  isActive: boolean
+  expiresAt: string
+}
+
+export interface Payout {
+  id: string
+  targetId: string
+  targetType: string
+  grossAmount: number
+  netAmount: number
+  status: string
+  processedAt?: string | null
+}
+
+export interface CommissionSummary {
+  commissionRatePercentage: number
+  grossVolume: number
+  totalCommission: number
+}
+
+export interface SubscriptionsReport {
+  totalActiveSubscriptions: number
+  totalCancelledSubscriptions: number
+  monthlyRecurringRevenue: number
+}
+
+export interface DeliveriesReport {
+  totalDeliveries: number
+  inTransitDeliveries: number
+  cancelledDeliveries: number
+}
+
+export interface AuditLog {
+  id: string
+  action: string
+  details: string
+  timestamp: string
+}
+
+export interface NotificationItem {
+  id: string
+  userId: string
+  title: string
+  message: string
+  isRead: boolean
+  createdAt: string
+}
+
+export interface DeliveryTracking {
+  deliveryId: string
+  orderId: string
+  status: string
+  latitude?: number | null
+  longitude?: number | null
+  updatedAt: string
 }
 
 export interface NutritionalEstimate {
