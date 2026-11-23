@@ -12,7 +12,6 @@ public class Restaurant : Entity
     public Guid OwnerId { get; set; }
     public DateTime? DeletedAt { get; set; }
 
-    // Endereço obrigatório do restaurante
     public string AddressStreet { get; set; } = string.Empty;
     public string AddressNumber { get; set; } = string.Empty;
     public string? AddressComplement { get; set; }
@@ -20,13 +19,23 @@ public class Restaurant : Entity
     public string AddressCity { get; set; } = string.Empty;
     public string AddressState { get; set; } = string.Empty;
     public string AddressZipCode { get; set; } = string.Empty;
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
+
+    public string OpeningHours { get; set; } = "Seg a Sáb • 10:30 às 15:30";
+    public decimal DeliveryFee { get; set; } = 0m;
+    public double DeliveryRadiusKm { get; set; } = 12.0;
+    public string? BankName { get; set; }
+    public string? BankAgency { get; set; }
+    public string? BankAccount { get; set; }
+    public string? PixKey { get; set; }
 
     public User Owner { get; set; } = null!;
 
     public List<ProductCategory> Categories { get; set; } = new();
     public List<Product> Products { get; set; } = new();
 
-    private Restaurant() { } // EF Core
+    private Restaurant() { }
 
     public Restaurant(string name, string description, string document, Guid ownerId)
     {

@@ -1,8 +1,8 @@
-using System.Collections.Concurrent;
 using System.Security.Claims;
 using Marmitas.Application.Common.Interfaces;
 using Marmitas.Application.Users;
 using Marmitas.Application.Users.Dtos;
+using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -12,26 +12,30 @@ namespace Marmitas.Api.Controllers;
 [ApiController]
 public class AuthController : ControllerBase
 {
-    private static readonly ConcurrentDictionary<string, (string Code, DateTime ExpiresAt)> ResetCodes = new();
-
     private readonly IRegisterUserService _registerUser;
     private readonly ILoginService _login;
     private readonly IUserRepository _users;
+    private readonly ICustomerProfileRepository _profiles;
     private readonly IPasswordHasher _passwordHasher;
     private readonly ITokenService _tokenService;
+    private readonly IHostEnvironment _environment;
 
     public AuthController(
         IRegisterUserService registerUser,
         ILoginService login,
         IUserRepository users,
+        ICustomerProfileRepository profiles,
         IPasswordHasher passwordHasher,
-        ITokenService tokenService)
+        ITokenService tokenService,
+        IHostEnvironment environment)
     {
         _registerUser = registerUser;
         _login = login;
         _users = users;
+        _profiles = profiles;
         _passwordHasher = passwordHasher;
         _tokenService = tokenService;
+        _environment = environment;
     }
 
     [HttpPost("registro")]
@@ -52,34 +56,74 @@ public class AuthController : ControllerBase
 
     [HttpPost("logout")]
     [Authorize]
-    public IActionResult Logout()
+    public async Task<IActionResult> Logout()
     {
+        var subClaim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (Guid.TryParse(subClaim, out var userId))
+        {
+            await _users.RevokeUserRefreshTokensAsync(userId);
+            await _users.SaveChangesAsync();
+        }
+
         return Ok(new { message = "Logout realizado com sucesso." });
     }
 
     [HttpPost("refresh-token")]
-    [Authorize]
+    [AllowAnonymous]
     public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest? request)
     {
-        var subClaim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
-        Marmitas.Domain.Entities.User? user = null;
+        User? user = null;
+        RefreshToken? existingRefresh = null;
 
-        if (Guid.TryParse(subClaim, out var userId))
+        if (!string.IsNullOrWhiteSpace(request?.RefreshToken))
         {
-            user = await _users.GetByIdAsync(userId);
+            existingRefresh = await _users.GetRefreshTokenAsync(request.RefreshToken.Trim());
+            if (existingRefresh == null || !existingRefresh.IsActive)
+                throw new Exception("Refresh token inválido ou expirado.");
+
+            user = await _users.GetByIdAsync(existingRefresh.UserId);
         }
-        else if (!string.IsNullOrWhiteSpace(request?.Email))
+        else
         {
-            user = await _users.GetByEmailAsync(request.Email.Trim().ToLower());
+            var subClaim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+            if (Guid.TryParse(subClaim, out var userId))
+            {
+                user = await _users.GetByIdAsync(userId);
+            }
+            else if (User.Identity?.IsAuthenticated == true && !string.IsNullOrWhiteSpace(request?.Email))
+            {
+                user = await _users.GetByEmailAsync(request.Email.Trim().ToLower());
+            }
         }
 
         if (user == null)
-            throw new Exception("Usuário não identificado para renovar o token.");
+            throw new Exception("Sessão inválida para renovar o token.");
+
+        var newRefreshValue = Convert.ToBase64String(Guid.NewGuid().ToByteArray())
+            .Replace("+", "")
+            .Replace("/", "")
+            .Replace("=", "");
+
+        if (existingRefresh != null)
+        {
+            existingRefresh.RevokedAt = DateTime.UtcNow;
+            existingRefresh.ReplacedByToken = newRefreshValue;
+        }
+
+        await _users.AddRefreshTokenAsync(new RefreshToken
+        {
+            UserId = user.Id,
+            Token = newRefreshValue,
+            ExpiresAt = DateTime.UtcNow.AddDays(7),
+            CreatedByIp = HttpContext.Connection.RemoteIpAddress?.ToString()
+        });
+        await _users.SaveChangesAsync();
 
         var (token, expiresAt) = _tokenService.GenerateToken(user);
         return Ok(new LoginResponse
         {
             AccessToken = token,
+            RefreshToken = newRefreshValue,
             ExpiresAt = expiresAt,
             User = UserMapper.ToResponse(user)
         });
@@ -97,13 +141,29 @@ public class AuthController : ControllerBase
             throw new Exception("Usuário não encontrado com este e-mail.");
 
         var code = Random.Shared.Next(100000, 999999).ToString();
-        ResetCodes[user.Email] = (code, DateTime.UtcNow.AddMinutes(15));
+        await _users.AddPasswordResetTokenAsync(new PasswordResetToken
+        {
+            UserId = user.Id,
+            Email = user.Email,
+            Code = code,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(15)
+        });
+
+        await _profiles.AddNotificationAsync(new Notification
+        {
+            UserId = user.Id,
+            Title = "Código de recuperação de senha",
+            Message = $"Seu código de verificação para redefinir a senha é {code} (válido por 15 minutos).",
+            IsRead = false
+        });
+
+        await _users.SaveChangesAsync();
 
         return Ok(new
         {
             message = "Solicitação de redefinição de senha registrada com sucesso.",
             email = user.Email,
-            resetCode = code
+            resetCode = _environment.IsProduction() ? null : code
         });
     }
 
@@ -114,32 +174,89 @@ public class AuthController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Email))
             throw new Exception("Informe o e-mail da conta.");
 
+        if (string.IsNullOrWhiteSpace(request.ResetCode))
+            throw new Exception("O código de verificação é obrigatório.");
+
         if (string.IsNullOrEmpty(request.NewPassword) || request.NewPassword.Length < 8)
             throw new Exception("A nova senha deve ter pelo menos 8 caracteres.");
 
-        var user = await _users.GetByEmailAsync(request.Email.Trim().ToLower());
+        var normalizedEmail = request.Email.Trim().ToLower();
+        var user = await _users.GetByEmailAsync(normalizedEmail);
         if (user == null)
             throw new Exception("Usuário não encontrado.");
 
-        if (ResetCodes.TryGetValue(user.Email, out var entry))
+        var tokenEntry = await _users.GetLatestPasswordResetTokenAsync(normalizedEmail);
+        if (tokenEntry == null)
+            throw new Exception("Nenhuma solicitação de redefinição ativa encontrada. Solicite um novo código.");
+
+        if (tokenEntry.ExpiresAt < DateTime.UtcNow || tokenEntry.Attempts >= 3)
         {
-            if (entry.ExpiresAt < DateTime.UtcNow)
-            {
-                ResetCodes.TryRemove(user.Email, out _);
-                throw new Exception("O código de verificação expirou. Solicite um novo código.");
-            }
-
-            if (string.IsNullOrWhiteSpace(request.ResetCode) || request.ResetCode.Trim() != entry.Code)
-            {
-                throw new Exception("Código de verificação inválido.");
-            }
-
-            ResetCodes.TryRemove(user.Email, out _);
+            tokenEntry.UsedAt = DateTime.UtcNow;
+            await _users.SaveChangesAsync();
+            throw new Exception("O código de verificação expirou ou excedeu o limite de tentativas. Solicite um novo código.");
         }
 
+        if (request.ResetCode.Trim() != tokenEntry.Code)
+        {
+            tokenEntry.Attempts++;
+            await _users.SaveChangesAsync();
+            throw new Exception("Código de verificação inválido.");
+        }
+
+        tokenEntry.UsedAt = DateTime.UtcNow;
         user.PasswordHash = _passwordHasher.Hash(request.NewPassword);
+        user.ResetFailedLogins();
+        await _users.RevokeUserRefreshTokensAsync(user.Id);
         await _users.SaveChangesAsync();
 
         return Ok(new { message = "Senha atualizada com sucesso." });
+    }
+
+    [HttpPost("mfa/ativar")]
+    [Authorize]
+    public async Task<IActionResult> EnableMfa()
+    {
+        var subClaim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (!Guid.TryParse(subClaim, out var userId))
+            return Unauthorized();
+
+        var user = await _users.GetByIdAsync(userId);
+        if (user == null)
+            throw new Exception("Usuário não encontrado.");
+
+        var secretCode = Random.Shared.Next(100000, 999999).ToString();
+        user.MfaEnabled = true;
+        user.MfaSecret = secretCode;
+        await _users.SaveChangesAsync();
+
+        return Ok(new
+        {
+            mfaEnabled = true,
+            verificationCode = secretCode,
+            message = "Autenticação em duas etapas (MFA) habilitada."
+        });
+    }
+
+    [HttpPost("mfa/desativar")]
+    [Authorize]
+    public async Task<IActionResult> DisableMfa()
+    {
+        var subClaim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (!Guid.TryParse(subClaim, out var userId))
+            return Unauthorized();
+
+        var user = await _users.GetByIdAsync(userId);
+        if (user == null)
+            throw new Exception("Usuário não encontrado.");
+
+        user.MfaEnabled = false;
+        user.MfaSecret = null;
+        await _users.SaveChangesAsync();
+
+        return Ok(new
+        {
+            mfaEnabled = false,
+            message = "Autenticação em duas etapas (MFA) desativada."
+        });
     }
 }

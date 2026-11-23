@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Marmitas.Application.Common.Interfaces;
+using Marmitas.Application.Platform.Dtos;
 using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -32,6 +33,9 @@ public class NotificationsController : ControllerBase
         if (notif == null)
             throw new Exception("Notificação não encontrada.");
 
+        if (notif.UserId != GetUserId() && !User.IsInRole("admin") && !User.IsInRole("super_admin"))
+            return Forbid();
+
         notif.IsRead = true;
         await _profiles.SaveChangesAsync();
         return Ok(notif);
@@ -55,6 +59,9 @@ public class NotificationsController : ControllerBase
         var notif = await _profiles.GetNotificationByIdAsync(id);
         if (notif == null)
             throw new Exception("Notificação não encontrada.");
+
+        if (notif.UserId != GetUserId() && !User.IsInRole("admin") && !User.IsInRole("super_admin"))
+            return Forbid();
 
         _profiles.RemoveNotification(notif);
         await _profiles.SaveChangesAsync();
@@ -111,11 +118,4 @@ public class NotificationsController : ControllerBase
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         return Guid.TryParse(sub, out var id) ? id : Guid.Empty;
     }
-}
-
-public class NotificationPreferencesDto
-{
-    public bool EmailEnabled { get; set; }
-    public bool PushEnabled { get; set; }
-    public bool SmsEnabled { get; set; }
 }

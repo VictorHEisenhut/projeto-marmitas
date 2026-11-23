@@ -21,6 +21,8 @@ public interface IDeliveryRepository
     Task<Delivery?> GetDeliveryByIdOrOrderAsync(Guid id);
     Task AddDeliveryAsync(Delivery delivery);
 
+    Task AddDriverLocationAsync(DriverLocation location);
+    Task<List<DriverLocation>> GetDriverLocationsAsync(Guid courierId, int limit = 20);
+
     Task SaveChangesAsync();
 }
-

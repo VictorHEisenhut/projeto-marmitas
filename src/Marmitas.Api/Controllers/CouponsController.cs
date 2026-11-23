@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Marmitas.Application.Common.Interfaces;
+using Marmitas.Application.Platform.Dtos;
 using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -118,17 +119,4 @@ public class CouponsController : ControllerBase
         var list = await _subscriptions.GetCouponUsagesAsync(id);
         return Ok(list);
     }
-}
-
-public class SaveCouponRequest
-{
-    public string Code { get; set; } = string.Empty;
-    public decimal DiscountPercentage { get; set; }
-    public DateTime? ExpiresAt { get; set; }
-}
-
-public class ValidateCouponRequest
-{
-    public string Code { get; set; } = string.Empty;
-    public decimal OrderAmount { get; set; }
 }

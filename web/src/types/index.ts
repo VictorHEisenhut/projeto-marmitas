@@ -12,12 +12,14 @@ export interface User {
   email: string
   phone?: string | null
   status: string
+  mfaEnabled?: boolean
   roles: string[]
 }
 
 export interface LoginRequest {
   email: string
   password: string
+  mfaCode?: string
 }
 
 export interface RegisterRequest {
@@ -26,10 +28,12 @@ export interface RegisterRequest {
   phone?: string | null
   password: string
   role?: string
+  termsAccepted?: boolean
 }
 
 export interface LoginResponse {
   accessToken: string
+  refreshToken?: string
   tokenType: string
   expiresAt: string
   user: User
@@ -62,6 +66,15 @@ export interface Restaurant {
   addressCity?: string
   addressState?: string
   addressZipCode?: string
+  latitude?: number | null
+  longitude?: number | null
+  openingHours?: string
+  deliveryFee?: number
+  deliveryRadiusKm?: number
+  bankName?: string | null
+  bankAgency?: string | null
+  bankAccount?: string | null
+  pixKey?: string | null
 }
 
 export interface Category {
@@ -85,6 +98,8 @@ export interface Product {
   name: string
   description: string
   price: number
+  promotionalPrice?: number | null
+  dailyStock?: number | null
   isActive: boolean
   imageUrl?: string | null
   availableInPlans?: boolean
@@ -99,7 +114,13 @@ export interface Plan {
   name: string
   description: string
   mealsPerWeek: number
+  mealsPerMonth?: number
   monthlyPrice: number
+  frequency?: string
+  allowedDays?: string
+  deliveryWindow?: string
+  deliveryFee?: number
+  cancellationPolicy?: string
   isActive: boolean
 }
 
@@ -112,6 +133,42 @@ export interface Subscription {
   status: string
   startDate: string
   nextBillingDate: string
+  totalMealsInCycle?: number
+  usedMealsInCycle?: number
+  preferredRestaurantId?: string | null
+  defaultAddressId?: string | null
+}
+
+export interface SubscriptionDelivery {
+  id: string
+  subscriptionId: string
+  restaurantId?: string | null
+  addressId?: string | null
+  scheduledDate: string
+  deliveryWindow: string
+  mealsCount: number
+  status: string
+}
+
+export interface DeliveryZone {
+  id: string
+  restaurantId: string
+  neighborhood: string
+  city: string
+  radiusKm: number
+  deliveryFee: number
+  estimatedMinutes: number
+  isActive: boolean
+}
+
+export interface RestaurantTeamMember {
+  id: string
+  restaurantId: string
+  userId: string
+  userName: string
+  userEmail: string
+  role: string
+  isActive: boolean
 }
 
 export interface Address {
@@ -124,6 +181,8 @@ export interface Address {
   city: string
   state: string
   zipCode: string
+  latitude?: number | null
+  longitude?: number | null
   isMain: boolean
 }
 
@@ -149,10 +208,14 @@ export interface Order {
   customerName?: string
   restaurantId: string
   restaurantName: string
+  subscriptionId?: string | null
+  subtotal?: number
+  deliveryFee?: number
   totalAmount: number
   discountAmount?: number
   couponCode?: string | null
   deliveryAddress?: string | null
+  confirmationPin?: string
   status: string
   createdAt: string
   updatedAt: string
@@ -178,10 +241,13 @@ export interface ReviewItem {
 
 export interface CreateOrderResponse {
   orderId: string
+  subtotal?: number
+  deliveryFee?: number
   totalAmount: number
   discountAmount?: number
   couponCode?: string | null
   deliveryAddress?: string | null
+  confirmationPin?: string
   status: string
 }
 
@@ -210,6 +276,8 @@ export interface Courier {
   phone: string
   status: string
   isAvailable: boolean
+  latitude?: number | null
+  longitude?: number | null
 }
 
 export interface CourierEarnings {
@@ -223,6 +291,9 @@ export interface Delivery {
   orderId: string
   courierId?: string | null
   status: string
+  deliveryFee?: number
+  distanceKm?: number
+  confirmationPin?: string
   createdAt?: string
   updatedAt?: string
   restaurantName?: string
@@ -258,11 +329,27 @@ export interface CourierVehicle {
   licensePlate: string
 }
 
+export interface RegionOrderSummary {
+  region: string
+  count: number
+  revenue: number
+}
+
 export interface AdminDashboard {
   totalUsers: number
+  totalCustomers?: number
   totalRestaurants: number
+  totalCouriers?: number
   totalOrders: number
   totalRevenue: number
+  averageTicket?: number
+  totalCommissions?: number
+  activeSubscriptions?: number
+  monthlyRecurringRevenue?: number
+  churnRatePercentage?: number
+  cancelledOrders?: number
+  averageDeliveryMinutes?: number
+  ordersByRegion?: RegionOrderSummary[]
 }
 
 export interface Coupon {
@@ -293,12 +380,14 @@ export interface SubscriptionsReport {
   totalActiveSubscriptions: number
   totalCancelledSubscriptions: number
   monthlyRecurringRevenue: number
+  churnRatePercentage?: number
 }
 
 export interface DeliveriesReport {
   totalDeliveries: number
   inTransitDeliveries: number
   cancelledDeliveries: number
+  averageDeliveryMinutes?: number
 }
 
 export interface AuditLog {
@@ -306,6 +395,8 @@ export interface AuditLog {
   action: string
   details: string
   timestamp: string
+  entityName?: string
+  entityId?: string
 }
 
 export interface NotificationItem {
@@ -317,10 +408,17 @@ export interface NotificationItem {
   createdAt: string
 }
 
+export interface NotificationPreferences {
+  emailEnabled: boolean
+  pushEnabled: boolean
+  smsEnabled: boolean
+}
+
 export interface DeliveryTracking {
   deliveryId: string
   orderId: string
   status: string
+  courierName?: string | null
   latitude?: number | null
   longitude?: number | null
   updatedAt: string

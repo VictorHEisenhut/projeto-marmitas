@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { AlertCircle, MapPin, MessageSquareReply, Minus, Plus, RefreshCw, Star, Trash2, Truck } from 'lucide-vue-next'
 import Navbar from '@/components/Navbar.vue'
 import { api, formatCurrency, getErrorMessage } from '@/services/api'
+import { OrderTrackingClient } from '@/services/realtime'
 import { useCartStore } from '@/stores/cart'
 import type {
   Address,
@@ -58,6 +59,27 @@ const trackingOrderId = ref<string | null>(null)
 const trackingInfo = ref<DeliveryTracking | null>(null)
 const loadingTracking = ref(false)
 
+const realtimeClient = new OrderTrackingClient({
+  onOrderStatusUpdated(payload) {
+    const target = orders.value.find((o) => o.id === payload.orderId)
+    if (target) {
+      target.status = payload.status
+      target.updatedAt = payload.updatedAt
+    }
+    if (trackingInfo.value && trackingInfo.value.orderId === payload.orderId) {
+      trackingInfo.value.status = payload.status
+      trackingInfo.value.updatedAt = payload.updatedAt
+    }
+  },
+  onDriverLocationUpdated(payload) {
+    if (trackingInfo.value && trackingInfo.value.orderId === payload.orderId) {
+      trackingInfo.value.latitude = payload.latitude
+      trackingInfo.value.longitude = payload.longitude
+      trackingInfo.value.updatedAt = payload.updatedAt
+    }
+  },
+})
+
 function getTrackingStep(status: string): number {
   if (status === 'Delivered') return 4
   if (status === 'InTransit' || status === 'DriverAssigned') return 3
@@ -99,15 +121,19 @@ const finalCartTotal = computed(() => {
 function formatStatus(status: string): string {
   const map: Record<string, string> = {
     Pending: 'Pendente',
+    PaymentPending: 'Aguardando pagamento',
     Created: 'Criado',
     Paid: 'Pago',
+    Confirmed: 'Confirmado pelo restaurante',
     Preparing: 'Em preparo',
     ReadyForPickup: 'Pronto para retirada',
     DriverAssigned: 'Entregador alocado',
+    PickedUp: 'Coletado pelo entregador',
     InTransit: 'Em rota de entrega',
     Delivered: 'Entregue',
     Cancelled: 'Cancelado',
     Refunded: 'Estornado',
+    Failed: 'Falha no pagamento',
   }
   return map[status] || status
 }
@@ -126,6 +152,9 @@ async function loadOrders() {
 
     if (ordersRes.status === 'fulfilled') {
       orders.value = ordersRes.value.data
+      for (const ord of orders.value) {
+        realtimeClient.joinOrderGroup(ord.id)
+      }
     }
 
     if (addrRes.status === 'fulfilled') {
@@ -280,7 +309,12 @@ async function handleSubmitComplaint(orderId: string) {
 }
 
 onMounted(() => {
+  void realtimeClient.connect()
   void loadOrders()
+})
+
+onUnmounted(() => {
+  realtimeClient.disconnect()
 })
 </script>
 
@@ -532,6 +566,15 @@ onMounted(() => {
                   Pedido #{{ order.id.slice(0, 8) }} •
                   {{ new Date(order.createdAt).toLocaleString('pt-BR') }}
                 </p>
+                <div
+                  v-if="order.confirmationPin && order.status !== 'Delivered' && order.status !== 'Cancelled' && order.status !== 'Refunded'"
+                  class="mt-1.5 inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs text-amber-900"
+                >
+                  <span class="font-mono font-bold">PIN de Entrega: {{ order.confirmationPin }}</span>
+                  <span class="text-[11px] text-amber-700">
+                    (Informe ao entregador ou à portaria para confirmar o recebimento)
+                  </span>
+                </div>
                 <p v-if="order.deliveryAddress" class="mt-0.5 inline-flex items-center gap-1 text-xs text-stone-500">
                   <MapPin class="h-3 w-3 text-stone-400" />
                   {{ order.deliveryAddress }}
@@ -639,6 +682,18 @@ onMounted(() => {
                 >
                   {{ idx + 1 }}. {{ label }}
                 </div>
+              </div>
+
+              <div
+                v-if="trackingInfo && (trackingInfo.latitude || trackingInfo.courierName)"
+                class="mt-3 flex flex-wrap items-center justify-between gap-2 rounded border border-stone-200 bg-white px-3 py-2 text-[11px] text-stone-600"
+              >
+                <span v-if="trackingInfo.courierName">
+                  <strong>Entregador:</strong> {{ trackingInfo.courierName }}
+                </span>
+                <span v-if="trackingInfo.latitude && trackingInfo.longitude">
+                  <strong>GPS:</strong> {{ trackingInfo.latitude.toFixed(4) }}, {{ trackingInfo.longitude.toFixed(4) }}
+                </span>
               </div>
             </div>
 

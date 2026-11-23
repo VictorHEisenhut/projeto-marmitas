@@ -8,38 +8,71 @@ namespace Marmitas.Application.Restaurants.Queries;
 public interface IRestaurantQueryService
 {
     Task<List<RestaurantDto>> GetAllPublicAsync();
+    Task<List<RestaurantDto>> GetAllAsync();
     Task<RestaurantDto> GetByIdAsync(Guid id);
     Task<RestaurantDto> CreateAsync(Guid ownerId, CreateRestaurantRequest request);
     Task<RestaurantDto> UpdateAsync(Guid id, CreateRestaurantRequest request);
     Task<RestaurantDto> ChangeStatusAsync(Guid id, string status);
     Task DeleteAsync(Guid id);
+    Task<bool> IsUserAuthorizedAsync(Guid restaurantId, Guid userId, bool isAdmin);
+
     Task<List<CategoryDto>> GetCategoriesAsync(Guid? restaurantId);
     Task<CategoryDto> CreateCategoryAsync(CreateCategoryRequest request);
     Task<CategoryDto> UpdateCategoryAsync(Guid id, CreateCategoryRequest request);
     Task DeleteCategoryAsync(Guid id);
+
     Task<List<ProductDto>> GetAllProductsAsync();
     Task<ProductDto> GetProductByIdAsync(Guid id);
-    Task<List<ProductDto>> GetRestaurantProductsAsync(Guid restaurantId);
+    Task<List<ProductDto>> GetRestaurantProductsAsync(Guid restaurantId, bool includeInactive = false);
     Task<ProductDto> CreateProductAsync(Guid restaurantId, CreateProductRequest request);
     Task<ProductDto> UpdateProductAsync(Guid id, CreateProductRequest request);
     Task<ProductDto> ChangeProductAvailabilityAsync(Guid id, bool isActive);
     Task DeleteProductAsync(Guid id);
+
+    Task<List<ProductOptionDto>> GetProductOptionsAsync(Guid productId);
+    Task<ProductOptionDto> AddProductOptionAsync(Guid productId, SaveProductOptionRequest request);
+    Task<ProductOptionDto> UpdateProductOptionAsync(Guid optionId, SaveProductOptionRequest request);
+    Task DeleteProductOptionAsync(Guid optionId);
 }
 
 public class RestaurantQueryService : IRestaurantQueryService
 {
     private readonly IRestaurantRepository _restaurantRepository;
     private readonly IUserRepository _userRepository;
+    private readonly ICacheService? _cacheService;
 
-    public RestaurantQueryService(IRestaurantRepository restaurantRepository, IUserRepository userRepository)
+    public RestaurantQueryService(
+        IRestaurantRepository restaurantRepository,
+        IUserRepository userRepository,
+        ICacheService? cacheService = null)
     {
         _restaurantRepository = restaurantRepository;
         _userRepository = userRepository;
+        _cacheService = cacheService;
     }
 
     public async Task<List<RestaurantDto>> GetAllPublicAsync()
     {
+        if (_cacheService != null)
+        {
+            var cached = await _cacheService.GetAsync<List<RestaurantDto>>("restaurants:public");
+            if (cached != null) return cached;
+        }
+
         var restaurants = await _restaurantRepository.GetAllApprovedAsync();
+        var list = restaurants.Select(MapRestaurant).ToList();
+
+        if (_cacheService != null)
+        {
+            await _cacheService.SetAsync("restaurants:public", list, TimeSpan.FromMinutes(3));
+        }
+
+        return list;
+    }
+
+    public async Task<List<RestaurantDto>> GetAllAsync()
+    {
+        var restaurants = await _restaurantRepository.GetAllAsync();
         return restaurants.Select(MapRestaurant).ToList();
     }
 
@@ -50,6 +83,12 @@ public class RestaurantQueryService : IRestaurantQueryService
             throw new Exception("Restaurante não encontrado.");
 
         return MapRestaurant(restaurant);
+    }
+
+    public async Task<bool> IsUserAuthorizedAsync(Guid restaurantId, Guid userId, bool isAdmin)
+    {
+        if (isAdmin) return true;
+        return await _restaurantRepository.IsUserAuthorizedAsync(restaurantId, userId);
     }
 
     public async Task<RestaurantDto> CreateAsync(Guid ownerId, CreateRestaurantRequest request)
@@ -87,7 +126,18 @@ public class RestaurantQueryService : IRestaurantQueryService
             AddressNeighborhood = request.AddressNeighborhood.Trim(),
             AddressCity = request.AddressCity.Trim(),
             AddressState = request.AddressState.Trim().ToUpperInvariant(),
-            AddressZipCode = request.AddressZipCode.Trim()
+            AddressZipCode = request.AddressZipCode.Trim(),
+            Latitude = request.Latitude,
+            Longitude = request.Longitude,
+            OpeningHours = string.IsNullOrWhiteSpace(request.OpeningHours)
+                ? "Seg a Sáb • 10:30 às 15:30"
+                : request.OpeningHours.Trim(),
+            DeliveryFee = request.DeliveryFee ?? 0m,
+            DeliveryRadiusKm = request.DeliveryRadiusKm ?? 12.0,
+            BankName = request.BankName?.Trim(),
+            BankAgency = request.BankAgency?.Trim(),
+            BankAccount = request.BankAccount?.Trim(),
+            PixKey = request.PixKey?.Trim()
         };
 
         restaurant.Approve();
@@ -95,6 +145,7 @@ public class RestaurantQueryService : IRestaurantQueryService
         await _restaurantRepository.AddAsync(restaurant);
         await EnsureOwnerRoleAsync(resolvedOwnerId);
         await _restaurantRepository.SaveChangesAsync();
+        await InvalidateCacheAsync(restaurant.Id);
 
         return MapRestaurant(restaurant);
     }
@@ -133,6 +184,16 @@ public class RestaurantQueryService : IRestaurantQueryService
         restaurant.AddressState = request.AddressState.Trim().ToUpperInvariant();
         restaurant.AddressZipCode = request.AddressZipCode.Trim();
 
+        if (request.Latitude.HasValue) restaurant.Latitude = request.Latitude;
+        if (request.Longitude.HasValue) restaurant.Longitude = request.Longitude;
+        if (!string.IsNullOrWhiteSpace(request.OpeningHours)) restaurant.OpeningHours = request.OpeningHours.Trim();
+        if (request.DeliveryFee.HasValue) restaurant.DeliveryFee = Math.Max(0m, request.DeliveryFee.Value);
+        if (request.DeliveryRadiusKm.HasValue) restaurant.DeliveryRadiusKm = Math.Max(1.0, request.DeliveryRadiusKm.Value);
+        if (request.BankName != null) restaurant.BankName = request.BankName.Trim();
+        if (request.BankAgency != null) restaurant.BankAgency = request.BankAgency.Trim();
+        if (request.BankAccount != null) restaurant.BankAccount = request.BankAccount.Trim();
+        if (request.PixKey != null) restaurant.PixKey = request.PixKey.Trim();
+
         if (request.OwnerId.HasValue && request.OwnerId.Value != Guid.Empty)
         {
             restaurant.OwnerId = request.OwnerId.Value;
@@ -140,6 +201,7 @@ public class RestaurantQueryService : IRestaurantQueryService
         }
 
         await _restaurantRepository.SaveChangesAsync();
+        await InvalidateCacheAsync(restaurant.Id);
         return MapRestaurant(restaurant);
     }
 
@@ -167,6 +229,7 @@ public class RestaurantQueryService : IRestaurantQueryService
 
         restaurant.Status = parsedStatus;
         await _restaurantRepository.SaveChangesAsync();
+        await InvalidateCacheAsync(restaurant.Id);
 
         return MapRestaurant(restaurant);
     }
@@ -180,6 +243,7 @@ public class RestaurantQueryService : IRestaurantQueryService
         restaurant.DeletedAt = DateTime.UtcNow;
         restaurant.Status = RestaurantStatus.Rejected;
         await _restaurantRepository.SaveChangesAsync();
+        await InvalidateCacheAsync(restaurant.Id);
     }
 
     public async Task<List<CategoryDto>> GetCategoriesAsync(Guid? restaurantId)
@@ -275,9 +339,9 @@ public class RestaurantQueryService : IRestaurantQueryService
         return MapProduct(product);
     }
 
-    public async Task<List<ProductDto>> GetRestaurantProductsAsync(Guid restaurantId)
+    public async Task<List<ProductDto>> GetRestaurantProductsAsync(Guid restaurantId, bool includeInactive = false)
     {
-        var products = await _restaurantRepository.GetProductsByRestaurantIdAsync(restaurantId);
+        var products = await _restaurantRepository.GetProductsByRestaurantIdAsync(restaurantId, includeInactive);
         return products.Select(MapProduct).ToList();
     }
 
@@ -316,6 +380,8 @@ public class RestaurantQueryService : IRestaurantQueryService
             request.Price,
             request.ImageUrl)
         {
+            PromotionalPrice = request.PromotionalPrice,
+            DailyStock = request.DailyStock,
             AvailableInPlans = request.AvailableInPlans,
             AllowsCutlery = request.AllowsCutlery,
             CutleryHasExtraCost = request.AllowsCutlery && request.CutleryHasExtraCost,
@@ -325,6 +391,7 @@ public class RestaurantQueryService : IRestaurantQueryService
 
         await _restaurantRepository.AddProductAsync(product);
         await _restaurantRepository.SaveChangesAsync();
+        await InvalidateCacheAsync(restaurantId);
 
         product.Category = category;
         return MapProduct(product);
@@ -351,6 +418,8 @@ public class RestaurantQueryService : IRestaurantQueryService
         product.Name = request.Name.Trim();
         product.Description = request.Description.Trim();
         product.Price = request.Price;
+        product.PromotionalPrice = request.PromotionalPrice;
+        product.DailyStock = request.DailyStock;
         product.ImageUrl = request.ImageUrl;
         product.AvailableInPlans = request.AvailableInPlans;
         product.AllowsCutlery = request.AllowsCutlery;
@@ -359,7 +428,81 @@ public class RestaurantQueryService : IRestaurantQueryService
         product.AddonsJson = JsonSerializer.Serialize(sanitizedAddons);
 
         await _restaurantRepository.SaveChangesAsync();
+        await InvalidateCacheAsync(product.RestaurantId);
         return MapProduct(product);
+    }
+
+    public async Task<List<ProductOptionDto>> GetProductOptionsAsync(Guid productId)
+    {
+        await GetProductByIdAsync(productId);
+        var options = await _restaurantRepository.GetProductOptionsAsync(productId);
+        return options.Select(o => new ProductOptionDto
+        {
+            Id = o.Id,
+            ProductId = o.ProductId,
+            Name = o.Name,
+            AdditionalPrice = o.AdditionalPrice,
+            MaxQuantity = o.MaxQuantity
+        }).ToList();
+    }
+
+    public async Task<ProductOptionDto> AddProductOptionAsync(Guid productId, SaveProductOptionRequest request)
+    {
+        await GetProductByIdAsync(productId);
+        if (string.IsNullOrWhiteSpace(request.Name))
+            throw new Exception("O nome da opção é obrigatório.");
+
+        var option = new ProductOption
+        {
+            ProductId = productId,
+            Name = request.Name.Trim(),
+            AdditionalPrice = Math.Max(0m, request.AdditionalPrice),
+            MaxQuantity = Math.Max(1, request.MaxQuantity)
+        };
+
+        await _restaurantRepository.AddProductOptionAsync(option);
+        await _restaurantRepository.SaveChangesAsync();
+
+        return new ProductOptionDto
+        {
+            Id = option.Id,
+            ProductId = option.ProductId,
+            Name = option.Name,
+            AdditionalPrice = option.AdditionalPrice,
+            MaxQuantity = option.MaxQuantity
+        };
+    }
+
+    public async Task<ProductOptionDto> UpdateProductOptionAsync(Guid optionId, SaveProductOptionRequest request)
+    {
+        var option = await _restaurantRepository.GetProductOptionByIdAsync(optionId);
+        if (option == null)
+            throw new Exception("Opção não encontrada.");
+
+        if (!string.IsNullOrWhiteSpace(request.Name))
+            option.Name = request.Name.Trim();
+        option.AdditionalPrice = Math.Max(0m, request.AdditionalPrice);
+        option.MaxQuantity = Math.Max(1, request.MaxQuantity);
+
+        await _restaurantRepository.SaveChangesAsync();
+        return new ProductOptionDto
+        {
+            Id = option.Id,
+            ProductId = option.ProductId,
+            Name = option.Name,
+            AdditionalPrice = option.AdditionalPrice,
+            MaxQuantity = option.MaxQuantity
+        };
+    }
+
+    public async Task DeleteProductOptionAsync(Guid optionId)
+    {
+        var option = await _restaurantRepository.GetProductOptionByIdAsync(optionId);
+        if (option == null)
+            throw new Exception("Opção não encontrada.");
+
+        _restaurantRepository.RemoveProductOption(option);
+        await _restaurantRepository.SaveChangesAsync();
     }
 
     private static void ValidateProductRequest(CreateProductRequest request)
@@ -416,6 +559,7 @@ public class RestaurantQueryService : IRestaurantQueryService
             product.Deactivate();
 
         await _restaurantRepository.SaveChangesAsync();
+        await InvalidateCacheAsync(product.RestaurantId);
         return MapProduct(product);
     }
 
@@ -428,6 +572,14 @@ public class RestaurantQueryService : IRestaurantQueryService
         product.Deactivate();
         product.DeletedAt = DateTime.UtcNow;
         await _restaurantRepository.SaveChangesAsync();
+        await InvalidateCacheAsync(product.RestaurantId);
+    }
+
+    private async Task InvalidateCacheAsync(Guid restaurantId)
+    {
+        if (_cacheService == null) return;
+        await _cacheService.RemoveAsync("restaurants:public");
+        await _cacheService.RemoveAsync($"restaurant:{restaurantId}:menu");
     }
 
     private static RestaurantDto MapRestaurant(Restaurant r) => new()
@@ -445,7 +597,16 @@ public class RestaurantQueryService : IRestaurantQueryService
         AddressNeighborhood = r.AddressNeighborhood,
         AddressCity = r.AddressCity,
         AddressState = r.AddressState,
-        AddressZipCode = r.AddressZipCode
+        AddressZipCode = r.AddressZipCode,
+        Latitude = r.Latitude,
+        Longitude = r.Longitude,
+        OpeningHours = r.OpeningHours,
+        DeliveryFee = r.DeliveryFee,
+        DeliveryRadiusKm = r.DeliveryRadiusKm,
+        BankName = r.BankName,
+        BankAgency = r.BankAgency,
+        BankAccount = r.BankAccount,
+        PixKey = r.PixKey
     };
 
     private static ProductDto MapProduct(Product p)
@@ -472,6 +633,8 @@ public class RestaurantQueryService : IRestaurantQueryService
             Name = p.Name,
             Description = p.Description,
             Price = p.Price,
+            PromotionalPrice = p.PromotionalPrice,
+            DailyStock = p.DailyStock,
             IsActive = p.IsActive,
             ImageUrl = p.ImageUrl,
             AvailableInPlans = p.AvailableInPlans,

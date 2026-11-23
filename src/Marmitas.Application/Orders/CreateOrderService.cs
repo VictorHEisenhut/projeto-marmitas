@@ -11,11 +11,13 @@ public interface ICreateOrderService
 {
     Task<CreateOrderResponse> ExecuteAsync(Guid customerId, CreateOrderRequest request);
     Task<List<OrderDto>> GetMyOrdersAsync(Guid customerId);
+    Task<List<OrderDto>> GetByRestaurantIdAsync(Guid restaurantId);
     Task<List<OrderDto>> GetAllOrdersAsync();
     Task<OrderDto> GetByIdAsync(Guid id);
     Task<List<OrderItemDto>> GetItemsAsync(Guid id);
-    Task<OrderDto> CancelAsync(Guid id);
-    Task<OrderDto> UpdateStatusAsync(Guid id, string status);
+    Task<List<OrderStatusHistoryDto>> GetStatusHistoryAsync(Guid id);
+    Task<OrderDto> CancelAsync(Guid id, bool isAdminOrStaff = false);
+    Task<OrderDto> UpdateStatusAsync(Guid id, string status, Guid? actorUserId = null, string? actorRole = null, string? notes = null);
     Task<OrderDto> SubmitComplaintAsync(Guid id, string message);
     Task<OrderDto> ReplyComplaintAsync(Guid id, string reply);
 }
@@ -26,17 +28,20 @@ public class CreateOrderService : ICreateOrderService
     private readonly IOrderRepository _orderRepository;
     private readonly ISubscriptionRepository? _subscriptionRepository;
     private readonly ICustomerProfileRepository? _profileRepository;
+    private readonly IRealtimeNotifier? _realtimeNotifier;
 
     public CreateOrderService(
         IRestaurantRepository restaurantRepository,
         IOrderRepository orderRepository,
         ISubscriptionRepository? subscriptionRepository = null,
-        ICustomerProfileRepository? profileRepository = null)
+        ICustomerProfileRepository? profileRepository = null,
+        IRealtimeNotifier? realtimeNotifier = null)
     {
         _restaurantRepository = restaurantRepository;
         _orderRepository = orderRepository;
         _subscriptionRepository = subscriptionRepository;
         _profileRepository = profileRepository;
+        _realtimeNotifier = realtimeNotifier;
     }
 
     public async Task<CreateOrderResponse> ExecuteAsync(Guid customerId, CreateOrderRequest request)
@@ -51,16 +56,26 @@ public class CreateOrderService : ICreateOrderService
         if (restaurant == null || restaurant.Status != RestaurantStatus.Approved)
             throw new Exception("Restaurante não encontrado ou inativo.");
 
+        var restaurantHours = await _restaurantRepository.GetRestaurantHoursAsync(request.RestaurantId);
+        if (restaurantHours.Count > 0)
+        {
+            var currentDay = (int)DateTime.UtcNow.DayOfWeek;
+            var todayRule = restaurantHours.FirstOrDefault(h => h.DayOfWeek == currentDay);
+            if (todayRule is { IsOpen: false })
+                throw new Exception("O restaurante está fechado para pedidos no dia de hoje.");
+        }
+
         var productIds = request.Items.Select(i => i.ProductId).Distinct().ToList();
         var activeProducts = await _restaurantRepository.GetActiveProductsByIdsAsync(request.RestaurantId, productIds);
 
-        if (activeProducts.Count() != productIds.Count)
+        if (activeProducts.Count != productIds.Count)
             throw new Exception("Um ou mais produtos não existem, não pertencem ao restaurante ou estão inativos.");
 
+        Subscription? activeSub = null;
         if (request.IsPlanRedemption && _subscriptionRepository != null)
         {
             var userSubs = await _subscriptionRepository.GetSubscriptionsByUserAsync(customerId);
-            var activeSub = userSubs.FirstOrDefault(s =>
+            activeSub = userSubs.FirstOrDefault(s =>
                 string.Equals(s.Status, "Active", StringComparison.OrdinalIgnoreCase));
 
             if (activeSub == null)
@@ -84,9 +99,15 @@ public class CreateOrderService : ICreateOrderService
                 throw new Exception(
                     $"Limite semanal do seu plano atingido ({weeklyLimit} marmitas/semana). Você já utilizou {usedMealsThisWeek} e possui {remaining} disponível(is) nesta semana.");
             }
+
+            activeSub.UsedMealsInCycle += requestedMeals;
         }
 
         var order = new Order(customerId, request.RestaurantId);
+        if (activeSub != null)
+        {
+            order.SubscriptionId = activeSub.Id;
+        }
 
         if (!string.IsNullOrWhiteSpace(request.DeliveryAddress))
         {
@@ -113,6 +134,11 @@ public class CreateOrderService : ICreateOrderService
         foreach (var itemRequest in request.Items)
         {
             var product = activeProducts.First(p => p.Id == itemRequest.ProductId);
+
+            if (product.DailyStock.HasValue && product.DailyStock.Value < itemRequest.Quantity)
+            {
+                throw new Exception($"Estoque diário insuficiente para a marmita '{product.Name}'.");
+            }
 
             if (request.IsPlanRedemption && !product.AvailableInPlans)
             {
@@ -155,7 +181,7 @@ public class CreateOrderService : ICreateOrderService
                 detailsSuffix.Add(cutleryCost > 0 ? "Com talher (extra)" : "Com talher (grátis)");
             }
 
-            var basePrice = request.IsPlanRedemption ? 0m : product.Price;
+            var basePrice = request.IsPlanRedemption ? 0m : product.GetEffectivePrice();
             var finalUnitPrice = basePrice + addonsCost + cutleryCost;
 
             var itemDisplayName = detailsSuffix.Count > 0
@@ -169,6 +195,23 @@ public class CreateOrderService : ICreateOrderService
 
             var orderItem = new OrderItem(product.Id, itemDisplayName, finalUnitPrice, itemRequest.Quantity);
             order.AddItem(orderItem);
+        }
+
+        if (!request.IsPlanRedemption)
+        {
+            var zones = await _restaurantRepository.GetDeliveryZonesAsync(request.RestaurantId);
+            var matchedZone = zones.FirstOrDefault(z =>
+                !string.IsNullOrWhiteSpace(order.DeliveryAddress) &&
+                order.DeliveryAddress.Contains(z.Neighborhood, StringComparison.OrdinalIgnoreCase));
+
+            if (matchedZone != null)
+            {
+                order.SetDeliveryFee(matchedZone.DeliveryFee);
+            }
+            else if (restaurant.DeliveryFee > 0)
+            {
+                order.SetDeliveryFee(restaurant.DeliveryFee);
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(request.CouponCode) && _subscriptionRepository != null)
@@ -187,25 +230,38 @@ public class CreateOrderService : ICreateOrderService
         }
 
         await _orderRepository.AddAsync(order);
-        if (_profileRepository != null)
+        await _orderRepository.AddStatusHistoryAsync(new OrderStatusHistory
         {
-            await _profileRepository.AddNotificationAsync(new Notification
-            {
-                UserId = customerId,
-                Title = "Pedido confirmado!",
-                Message = $"Seu pedido no restaurante {restaurant.Name} foi recebido ({order.TotalAmount:C2}).",
-                IsRead = false
-            });
-        }
+            OrderId = order.Id,
+            FromStatus = "None",
+            ToStatus = order.Status.ToString(),
+            ChangedByUserId = customerId,
+            ChangedByRole = "customer",
+            Notes = "Pedido criado"
+        });
+
+        await CreateNotificationSafeAsync(
+            customerId,
+            "Pedido recebido!",
+            $"Seu pedido #{order.Id.ToString()[..8]} no restaurante {restaurant.Name} foi criado ({order.TotalAmount:C2}). Código de entrega: {order.ConfirmationPin}.");
+
         await _orderRepository.SaveChangesAsync();
+
+        if (_realtimeNotifier != null)
+        {
+            await _realtimeNotifier.NotifyOrderStatusChangedAsync(order.Id, customerId, order.RestaurantId, order.Status.ToString());
+        }
 
         return new CreateOrderResponse
         {
             OrderId = order.Id,
+            Subtotal = order.Subtotal,
+            DeliveryFee = order.DeliveryFee,
             TotalAmount = order.TotalAmount,
             DiscountAmount = order.DiscountAmount,
             CouponCode = order.CouponCode,
             DeliveryAddress = order.DeliveryAddress,
+            ConfirmationPin = order.ConfirmationPin,
             Status = order.Status.ToString()
         };
     }
@@ -219,6 +275,12 @@ public class CreateOrderService : ICreateOrderService
     public async Task<List<OrderDto>> GetMyOrdersAsync(Guid customerId)
     {
         var orders = await _orderRepository.GetByCustomerIdAsync(customerId);
+        return orders.Select(MapOrder).ToList();
+    }
+
+    public async Task<List<OrderDto>> GetByRestaurantIdAsync(Guid restaurantId)
+    {
+        var orders = await _orderRepository.GetByRestaurantIdAsync(restaurantId);
         return orders.Select(MapOrder).ToList();
     }
 
@@ -246,7 +308,42 @@ public class CreateOrderService : ICreateOrderService
         return order.Items.Select(MapItem).ToList();
     }
 
-    public async Task<OrderDto> CancelAsync(Guid id)
+    public async Task<List<OrderStatusHistoryDto>> GetStatusHistoryAsync(Guid id)
+    {
+        var order = await _orderRepository.GetByIdAsync(id);
+        if (order == null)
+            throw new Exception("Pedido não encontrado.");
+
+        var history = await _orderRepository.GetStatusHistoryAsync(id);
+        if (history.Count == 0)
+        {
+            return new List<OrderStatusHistoryDto>
+            {
+                new()
+                {
+                    Id = order.Id,
+                    OrderId = order.Id,
+                    FromStatus = "Created",
+                    ToStatus = order.Status.ToString(),
+                    CreatedAt = order.UpdatedAt
+                }
+            };
+        }
+
+        return history.Select(h => new OrderStatusHistoryDto
+        {
+            Id = h.Id,
+            OrderId = h.OrderId,
+            FromStatus = h.FromStatus,
+            ToStatus = h.ToStatus,
+            ChangedByUserId = h.ChangedByUserId,
+            ChangedByRole = h.ChangedByRole,
+            Notes = h.Notes,
+            CreatedAt = h.CreatedAt
+        }).ToList();
+    }
+
+    public async Task<OrderDto> CancelAsync(Guid id, bool isAdminOrStaff = false)
     {
         var order = await _orderRepository.GetByIdAsync(id);
         if (order == null)
@@ -255,13 +352,49 @@ public class CreateOrderService : ICreateOrderService
         if (order.Status == OrderStatus.Delivered)
             throw new Exception("Não é possível cancelar um pedido já entregue.");
 
-        order.Status = OrderStatus.Cancelled;
+        if (!isAdminOrStaff && !order.CanBeCancelledByCustomer())
+            throw new Exception("O pedido já entrou em preparo/transporte e não pode ser cancelado diretamente pelo cliente.");
+
+        var previous = order.Status.ToString();
+        order.TransitionTo(OrderStatus.Cancelled);
+
+        if (order.SubscriptionId.HasValue && _subscriptionRepository != null)
+        {
+            var sub = await _subscriptionRepository.GetSubscriptionByIdAsync(order.SubscriptionId.Value);
+            if (sub != null)
+            {
+                var planMeals = order.Items
+                    .Where(i => i.ProductName.StartsWith("[PLANO]", StringComparison.OrdinalIgnoreCase))
+                    .Sum(i => i.Quantity);
+                sub.UsedMealsInCycle = Math.Max(0, sub.UsedMealsInCycle - planMeals);
+            }
+        }
+
+        await _orderRepository.AddStatusHistoryAsync(new OrderStatusHistory
+        {
+            OrderId = order.Id,
+            FromStatus = previous,
+            ToStatus = OrderStatus.Cancelled.ToString(),
+            ChangedByRole = isAdminOrStaff ? "admin" : "customer",
+            Notes = "Pedido cancelado"
+        });
+
+        await CreateNotificationSafeAsync(
+            order.CustomerId,
+            "Pedido cancelado",
+            $"Seu pedido #{order.Id.ToString()[..8]} foi cancelado.");
+
         await _orderRepository.SaveChangesAsync();
+
+        if (_realtimeNotifier != null)
+        {
+            await _realtimeNotifier.NotifyOrderStatusChangedAsync(order.Id, order.CustomerId, order.RestaurantId, order.Status.ToString());
+        }
 
         return MapOrder(order);
     }
 
-    public async Task<OrderDto> UpdateStatusAsync(Guid id, string status)
+    public async Task<OrderDto> UpdateStatusAsync(Guid id, string status, Guid? actorUserId = null, string? actorRole = null, string? notes = null)
     {
         var order = await _orderRepository.GetByIdAsync(id);
         if (order == null)
@@ -270,20 +403,67 @@ public class CreateOrderService : ICreateOrderService
         if (!Enum.TryParse<OrderStatus>(status, true, out var parsedStatus))
             throw new Exception("Status de pedido inválido.");
 
-        order.Status = parsedStatus;
-        if (_profileRepository != null)
+        var previous = order.Status.ToString();
+        order.TransitionTo(parsedStatus);
+
+        await _orderRepository.AddStatusHistoryAsync(new OrderStatusHistory
         {
-            await _profileRepository.AddNotificationAsync(new Notification
-            {
-                UserId = order.CustomerId,
-                Title = "Atualização do pedido",
-                Message = $"O status do seu pedido #{order.Id.ToString()[..8]} mudou para {parsedStatus}.",
-                IsRead = false
-            });
-        }
+            OrderId = order.Id,
+            FromStatus = previous,
+            ToStatus = parsedStatus.ToString(),
+            ChangedByUserId = actorUserId,
+            ChangedByRole = actorRole,
+            Notes = notes
+        });
+
+        var (notifTitle, notifMsg) = GetStatusNotificationMessage(order.Id, parsedStatus);
+        await CreateNotificationSafeAsync(order.CustomerId, notifTitle, notifMsg);
+
         await _orderRepository.SaveChangesAsync();
 
+        if (_realtimeNotifier != null)
+        {
+            await _realtimeNotifier.NotifyOrderStatusChangedAsync(order.Id, order.CustomerId, order.RestaurantId, parsedStatus.ToString());
+        }
+
         return MapOrder(order);
+    }
+
+    private async Task CreateNotificationSafeAsync(Guid userId, string title, string message)
+    {
+        if (_profileRepository == null) return;
+        await _profileRepository.AddNotificationAsync(new Notification
+        {
+            UserId = userId,
+            Title = title,
+            Message = message,
+            IsRead = false
+        });
+
+        if (_realtimeNotifier != null)
+        {
+            await _realtimeNotifier.NotifyUserAsync(userId, title, message);
+        }
+    }
+
+    private static (string Title, string Message) GetStatusNotificationMessage(Guid orderId, OrderStatus status)
+    {
+        var code = orderId.ToString()[..8];
+        return status switch
+        {
+            OrderStatus.Paid => ("Pagamento aprovado", $"O pagamento do pedido #{code} foi aprovado."),
+            OrderStatus.Confirmed => ("Pedido confirmado", $"O restaurante confirmou seu pedido #{code}."),
+            OrderStatus.Preparing => ("Pedido em preparo", $"Sua marmita do pedido #{code} está sendo preparada."),
+            OrderStatus.ReadyForPickup => ("Pedido pronto", $"Seu pedido #{code} está pronto aguardando coleta."),
+            OrderStatus.DriverAssigned => ("Entregador atribuído", $"Um entregador aceitou a coleta do seu pedido #{code}."),
+            OrderStatus.PickedUp => ("Pedido coletado", $"O entregador retirou seu pedido #{code} no restaurante."),
+            OrderStatus.InTransit => ("Pedido em trânsito", $"Seu pedido #{code} saiu para entrega no seu endereço."),
+            OrderStatus.Delivered => ("Pedido entregue", $"Seu pedido #{code} foi entregue. Bom apetite!"),
+            OrderStatus.Cancelled => ("Pedido cancelado", $"O pedido #{code} foi cancelado."),
+            OrderStatus.Refunded => ("Pedido reembolsado", $"O reembolso do pedido #{code} foi processado."),
+            OrderStatus.Failed => ("Pagamento recusado", $"Houve uma falha no pagamento do pedido #{code}."),
+            _ => ("Atualização do pedido", $"O status do seu pedido #{code} mudou para {status}.")
+        };
     }
 
     public async Task<OrderDto> SubmitComplaintAsync(Guid id, string message)
@@ -313,6 +493,10 @@ public class CreateOrderService : ICreateOrderService
 
         order.ComplaintReply = reply.Trim();
         order.ComplaintRepliedAt = DateTime.UtcNow;
+        await CreateNotificationSafeAsync(
+            order.CustomerId,
+            "Resposta à sua reclamação",
+            $"O restaurante respondeu à sua reclamação no pedido #{order.Id.ToString()[..8]}.");
         await _orderRepository.SaveChangesAsync();
 
         return MapOrder(order);
@@ -325,10 +509,14 @@ public class CreateOrderService : ICreateOrderService
         CustomerName = o.Customer != null ? o.Customer.Name : "Cliente",
         RestaurantId = o.RestaurantId,
         RestaurantName = o.Restaurant != null ? o.Restaurant.Name : string.Empty,
+        SubscriptionId = o.SubscriptionId,
+        Subtotal = o.Subtotal > 0 ? o.Subtotal : o.Items.Sum(i => i.TotalPrice),
+        DeliveryFee = o.DeliveryFee,
         TotalAmount = o.TotalAmount,
         DiscountAmount = o.DiscountAmount,
         CouponCode = o.CouponCode,
         DeliveryAddress = o.DeliveryAddress,
+        ConfirmationPin = o.ConfirmationPin,
         Status = o.Status.ToString(),
         CreatedAt = o.CreatedAt,
         UpdatedAt = o.UpdatedAt,

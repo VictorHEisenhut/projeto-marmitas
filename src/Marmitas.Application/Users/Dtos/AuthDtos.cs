@@ -7,12 +7,15 @@ public class RegisterRequest
     public string? Phone { get; set; }
     public string Password { get; set; } = string.Empty;
     public string? Role { get; set; }
+    public bool TermsAccepted { get; set; } = true;
+    public string? TermsVersion { get; set; } = "v1.0";
 }
 
 public class LoginRequest
 {
     public string Email { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
+    public string? MfaCode { get; set; }
 }
 
 public class UserResponse
@@ -22,12 +25,14 @@ public class UserResponse
     public string Email { get; set; } = string.Empty;
     public string? Phone { get; set; }
     public string Status { get; set; } = string.Empty;
+    public bool MfaEnabled { get; set; }
     public List<string> Roles { get; set; } = new();
 }
 
 public class LoginResponse
 {
     public string AccessToken { get; set; } = string.Empty;
+    public string? RefreshToken { get; set; }
     public string TokenType { get; set; } = "Bearer";
     public DateTime ExpiresAt { get; set; }
     public UserResponse User { get; set; } = new();
@@ -53,6 +58,7 @@ public class CreateRoleRequest
 {
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
+    public List<string>? Permissions { get; set; }
 }
 
 public class ForgotPasswordRequest
@@ -70,4 +76,5 @@ public class ResetPasswordRequest
 public class RefreshTokenRequest
 {
     public string? Email { get; set; }
+    public string? RefreshToken { get; set; }
 }

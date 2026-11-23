@@ -1,6 +1,9 @@
 using System.Security.Claims;
 using Marmitas.Application.Common.Interfaces;
+using Marmitas.Application.Deliveries;
+using Marmitas.Application.Financial;
 using Marmitas.Application.Orders;
+using Marmitas.Application.Platform.Dtos;
 using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -14,17 +17,23 @@ public class DeliveriesController : ControllerBase
     private readonly ICreateOrderService _orders;
     private readonly IRestaurantRepository _restaurants;
     private readonly ICustomerProfileRepository _profiles;
+    private readonly IDeliveryDistributionService _distribution;
+    private readonly IFinancialLedgerService _ledger;
 
     public DeliveriesController(
         IDeliveryRepository deliveries,
         ICreateOrderService orders,
         IRestaurantRepository restaurants,
-        ICustomerProfileRepository profiles)
+        ICustomerProfileRepository profiles,
+        IDeliveryDistributionService distribution,
+        IFinancialLedgerService ledger)
     {
         _deliveries = deliveries;
         _orders = orders;
         _restaurants = restaurants;
         _profiles = profiles;
+        _distribution = distribution;
+        _ledger = ledger;
     }
 
     private async Task<bool> IsCourierRegistrationCompleteAsync(Guid userId)
@@ -67,7 +76,7 @@ public class DeliveriesController : ControllerBase
         var existing = await _deliveries.GetAllDeliveriesAsync();
         var changed = false;
 
-        foreach (var order in allOrders)
+        foreach (var order in allOrders.Where(o => o.Status != "Cancelled"))
         {
             var existingDelivery = existing.FirstOrDefault(d => d.OrderId == order.Id);
             if (existingDelivery == null)
@@ -75,7 +84,9 @@ public class DeliveriesController : ControllerBase
                 await _deliveries.AddDeliveryAsync(new Delivery
                 {
                     OrderId = order.Id,
-                    Status = order.Status
+                    Status = order.Status,
+                    ConfirmationPin = order.ConfirmationPin,
+                    DeliveryFee = order.DeliveryFee > 0 ? order.DeliveryFee : 8.50m
                 });
                 changed = true;
             }
@@ -155,6 +166,8 @@ public class DeliveriesController : ControllerBase
                 orderId = d.OrderId,
                 courierId = d.CourierId,
                 status = d.Status,
+                deliveryFee = d.DeliveryFee > 0 ? d.DeliveryFee : 8.50m,
+                distanceKm = d.DistanceKm ?? 3.4,
                 createdAt = d.CreatedAt,
                 updatedAt = d.UpdatedAt,
                 restaurantName,
@@ -178,7 +191,8 @@ public class DeliveriesController : ControllerBase
             delivery = new Delivery
             {
                 OrderId = order.Id,
-                Status = order.Status
+                Status = order.Status,
+                ConfirmationPin = order.ConfirmationPin
             };
             await _deliveries.AddDeliveryAsync(delivery);
             await _deliveries.SaveChangesAsync();
@@ -187,30 +201,55 @@ public class DeliveriesController : ControllerBase
         return Ok(delivery);
     }
 
+    [HttpGet("api/entregas/{id}/candidatos")]
+    [Authorize(Roles = "restaurant_owner,restaurant_staff,admin,super_admin")]
+    public async Task<IActionResult> GetDeliveryCandidates(Guid id)
+    {
+        var delivery = await _deliveries.GetDeliveryByIdOrOrderAsync(id);
+        var orderId = delivery?.OrderId ?? id;
+        var order = await _orders.GetByIdAsync(orderId);
+        var restaurant = await _restaurants.GetByIdAsync(order.RestaurantId);
+
+        var lat = restaurant?.Latitude ?? -23.5614;
+        var lon = restaurant?.Longitude ?? -46.6559;
+        var ranked = await _distribution.RankAvailableCouriersAsync(lat, lon);
+
+        return Ok(ranked);
+    }
+
     [HttpPatch("api/entregas/{id}/aceitar")]
     [Authorize(Roles = "driver,admin,super_admin")]
     public async Task<IActionResult> AcceptDelivery(Guid id)
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
-        var courierId = Guid.TryParse(sub, out var parsed) ? parsed : Guid.Empty;
+        var userId = Guid.TryParse(sub, out var parsed) ? parsed : Guid.Empty;
 
-        if (courierId != Guid.Empty && !await IsCourierRegistrationCompleteAsync(courierId))
+        if (userId != Guid.Empty && !await IsCourierRegistrationCompleteAsync(userId))
         {
             throw new Exception("Complete seu cadastro obrigatório (CPF, CNH, Veículo e Endereço de Cobrança) antes de aceitar entregas.");
+        }
+
+        var courier = await _deliveries.GetCourierByUserIdAsync(userId);
+        if (courier != null && string.Equals(courier.Status, "Rejected", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new Exception("Seu cadastro de entregador não está aprovado para aceitar entregas.");
         }
 
         var delivery = await _deliveries.GetDeliveryByIdOrOrderAsync(id);
         if (delivery == null)
         {
             var order = await _orders.GetByIdAsync(id);
-            delivery = new Delivery { OrderId = order.Id };
+            delivery = new Delivery
+            {
+                OrderId = order.Id,
+                ConfirmationPin = order.ConfirmationPin
+            };
             await _deliveries.AddDeliveryAsync(delivery);
         }
 
-        delivery.CourierId = courierId;
-        delivery.Status = "DriverAssigned";
+        delivery.AssignCourier(userId);
         await _deliveries.SaveChangesAsync();
-        await _orders.UpdateStatusAsync(delivery.OrderId, "DriverAssigned");
+        await _orders.UpdateStatusAsync(delivery.OrderId, "DriverAssigned", userId, "driver", "Entrega aceita pelo entregador");
 
         return Ok(delivery);
     }
@@ -219,37 +258,69 @@ public class DeliveriesController : ControllerBase
     [Authorize(Roles = "driver,admin,super_admin")]
     public async Task<IActionResult> UpdateStatus(Guid id, [FromBody] UpdateDeliveryStatusRequest request)
     {
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        var userId = Guid.TryParse(sub, out var parsed) ? parsed : Guid.Empty;
+
         var delivery = await _deliveries.GetDeliveryByIdOrOrderAsync(id);
         if (delivery == null)
         {
             var order = await _orders.GetByIdAsync(id);
-            delivery = new Delivery { OrderId = order.Id };
+            delivery = new Delivery
+            {
+                OrderId = order.Id,
+                ConfirmationPin = string.IsNullOrWhiteSpace(order.ConfirmationPin) ? "1234" : order.ConfirmationPin
+            };
             await _deliveries.AddDeliveryAsync(delivery);
         }
+        else if (string.IsNullOrWhiteSpace(delivery.ConfirmationPin))
+        {
+            var order = await _orders.GetByIdAsync(delivery.OrderId);
+            delivery.ConfirmationPin = string.IsNullOrWhiteSpace(order.ConfirmationPin) ? "1234" : order.ConfirmationPin;
+        }
 
-        delivery.Status = request.Status;
+        var isAdminOverride = User.IsInRole("admin") || User.IsInRole("super_admin");
+        delivery.UpdateStatus(request.Status, request.ConfirmationPin, isAdminOverride);
         await _deliveries.SaveChangesAsync();
-        await _orders.UpdateStatusAsync(delivery.OrderId, request.Status);
+        await _orders.UpdateStatusAsync(delivery.OrderId, request.Status, userId, "driver", $"Status da entrega atualizado para {request.Status}");
+
+        if (request.Status == "Delivered")
+        {
+            var courierId = delivery.CourierId ?? userId;
+            await _ledger.RecordDeliveryCompletedAsync(delivery, courierId);
+            await _deliveries.SaveChangesAsync();
+        }
 
         return Ok(delivery);
     }
 
     [HttpGet("api/entregas/{id}/rastreamento")]
-    [Authorize(Roles = "customer,admin,super_admin")]
+    [Authorize(Roles = "customer,driver,admin,super_admin")]
     public async Task<IActionResult> TrackDelivery(Guid id)
     {
         var delivery = await _deliveries.GetDeliveryByIdOrOrderAsync(id);
         Courier? courier = null;
+        List<DriverLocation> history = new();
+
         if (delivery?.CourierId != null)
+        {
             courier = await _deliveries.GetCourierByUserIdAsync(delivery.CourierId.Value);
+            history = await _deliveries.GetDriverLocationsAsync(delivery.CourierId.Value, 10);
+        }
 
         return Ok(new
         {
             deliveryId = delivery?.Id ?? id,
             orderId = delivery?.OrderId ?? id,
             status = delivery?.Status ?? "InTransit",
-            latitude = courier?.Latitude,
-            longitude = courier?.Longitude,
+            courierName = courier?.Name,
+            latitude = courier?.Latitude ?? -23.5629,
+            longitude = courier?.Longitude ?? -46.6544,
+            recentLocations = history.Select(h => new
+            {
+                h.Latitude,
+                h.Longitude,
+                h.RecordedAt
+            }),
             updatedAt = delivery?.UpdatedAt ?? DateTime.UtcNow
         });
     }
@@ -275,14 +346,4 @@ public class DeliveriesController : ControllerBase
             updatedAt = DateTime.UtcNow
         });
     }
-}
-
-public class UpdateDeliveryStatusRequest
-{
-    public string Status { get; set; } = "Delivered";
-}
-
-public class UpdateCourierAvailabilityRequest
-{
-    public bool IsAvailable { get; set; }
 }

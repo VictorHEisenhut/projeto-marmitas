@@ -35,8 +35,9 @@ public class RegisterUserService : IRegisterUserService
 
         var requestedRole = request.Role?.Trim().ToLower() switch
         {
-            "restaurant_owner" => "restaurant_owner",
-            "driver" => "driver",
+            "restaurant_owner" => RoleNames.RestaurantOwner,
+            "restaurant_staff" => RoleNames.RestaurantStaff,
+            "driver" => RoleNames.Driver,
             _ => RoleNames.Customer
         };
 
@@ -51,6 +52,14 @@ public class RegisterUserService : IRegisterUserService
         user.AddRole(role);
 
         await _users.AddAsync(user);
+        await _users.AddUserConsentAsync(new UserConsent
+        {
+            UserId = user.Id,
+            Purpose = "TermsAndPrivacy",
+            TermsVersion = request.TermsVersion ?? "v1.0",
+            IsGranted = request.TermsAccepted,
+            ConsentedAt = DateTime.UtcNow
+        });
         await _users.SaveChangesAsync();
 
         return UserMapper.ToResponse(user);
@@ -60,12 +69,12 @@ public class RegisterUserService : IRegisterUserService
     {
         if (string.IsNullOrWhiteSpace(request.Name))
             throw new Exception("O nome é obrigatório.");
-        else if (request.Name.Trim().Length > 150)
+        if (request.Name.Trim().Length > 150)
             throw new Exception("O nome deve ter no máximo 150 caracteres.");
 
         if (string.IsNullOrWhiteSpace(request.Email))
             throw new Exception("O e-mail é obrigatório.");
-        else if (!IsValidEmail(request.Email.Trim()))
+        if (!IsValidEmail(request.Email.Trim()))
             throw new Exception("O e-mail informado é inválido.");
 
         if (string.IsNullOrEmpty(request.Password) || request.Password.Length < MinPasswordLength)

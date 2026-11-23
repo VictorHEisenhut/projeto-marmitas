@@ -11,5 +11,6 @@ public class Address : Entity
     public string State { get; set; } = string.Empty;
     public string ZipCode { get; set; } = string.Empty;
     public bool IsMain { get; set; }
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
 }
-

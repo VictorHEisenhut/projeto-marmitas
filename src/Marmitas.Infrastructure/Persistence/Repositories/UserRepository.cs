@@ -46,13 +46,18 @@ public class UserRepository : IUserRepository
 
     public Task<Role?> GetRoleByIdAsync(Guid id)
     {
-        return _context.Roles.FirstOrDefaultAsync(r => r.Id == id);
+        return _context.Roles
+            .Include(r => r.RolePermissions)
+            .ThenInclude(rp => rp.Permission)
+            .FirstOrDefaultAsync(r => r.Id == id);
     }
 
     public Task<List<Role>> GetAllRolesAsync()
     {
         return _context.Roles
             .AsNoTracking()
+            .Include(r => r.RolePermissions)
+            .ThenInclude(rp => rp.Permission)
             .OrderBy(r => r.Name)
             .ToListAsync();
     }
@@ -73,6 +78,57 @@ public class UserRepository : IUserRepository
     public async Task AddAsync(User user)
     {
         await _context.Users.AddAsync(user);
+    }
+
+    public async Task AddRefreshTokenAsync(RefreshToken refreshToken)
+    {
+        await _context.RefreshTokens.AddAsync(refreshToken);
+    }
+
+    public Task<RefreshToken?> GetRefreshTokenAsync(string token)
+    {
+        return _context.RefreshTokens.FirstOrDefaultAsync(t => t.Token == token);
+    }
+
+    public async Task RevokeUserRefreshTokensAsync(Guid userId)
+    {
+        var active = await _context.RefreshTokens
+            .Where(t => t.UserId == userId && t.RevokedAt == null)
+            .ToListAsync();
+
+        var now = DateTime.UtcNow;
+        foreach (var token in active)
+        {
+            token.RevokedAt = now;
+        }
+    }
+
+    public async Task AddPasswordResetTokenAsync(PasswordResetToken token)
+    {
+        await _context.PasswordResetTokens.AddAsync(token);
+    }
+
+    public Task<PasswordResetToken?> GetLatestPasswordResetTokenAsync(string email)
+    {
+        var normalized = email.Trim().ToLower();
+        return _context.PasswordResetTokens
+            .Where(t => t.Email == normalized && t.UsedAt == null)
+            .OrderByDescending(t => t.CreatedAt)
+            .FirstOrDefaultAsync();
+    }
+
+    public async Task AddUserConsentAsync(UserConsent consent)
+    {
+        await _context.UserConsents.AddAsync(consent);
+    }
+
+    public Task<List<UserConsent>> GetUserConsentsAsync(Guid userId)
+    {
+        return _context.UserConsents
+            .AsNoTracking()
+            .Where(c => c.UserId == userId)
+            .OrderByDescending(c => c.ConsentedAt)
+            .ToListAsync();
     }
 
     public async Task SaveChangesAsync()

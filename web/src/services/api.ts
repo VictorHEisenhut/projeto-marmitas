@@ -97,6 +97,25 @@ export function getErrorMessage(error: unknown, fallback = 'Ocorreu um erro ines
   return fallback
 }
 
+export interface UploadedFileResponse {
+  fileName: string
+  originalName: string
+  url: string
+  contentType: string
+  sizeBytes: number
+}
+
+export async function uploadFile(file: File): Promise<UploadedFileResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const { data } = await api.post<UploadedFileResponse>('/arquivos/upload', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  })
+  return data
+}
+
 export function formatCurrency(value: number): string {
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',

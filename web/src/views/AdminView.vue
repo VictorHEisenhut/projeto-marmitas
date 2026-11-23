@@ -24,6 +24,7 @@ import type {
   Coupon,
   Courier,
   DeliveriesReport,
+  Order,
   Payout,
   Plan,
   Restaurant,
@@ -31,7 +32,7 @@ import type {
   User,
 } from '@/types'
 
-type AdminTab = 'restaurantes' | 'planos' | 'usuarios' | 'financeiro'
+type AdminTab = 'restaurantes' | 'planos' | 'usuarios' | 'pedidos' | 'financeiro'
 
 const activeTab = ref<AdminTab>('restaurantes')
 const loading = ref(true)
@@ -45,11 +46,17 @@ const plans = ref<Plan[]>([])
 const coupons = ref<Coupon[]>([])
 const users = ref<User[]>([])
 const couriers = ref<Courier[]>([])
+const adminOrders = ref<Order[]>([])
 const payouts = ref<Payout[]>([])
 const commissions = ref<CommissionSummary | null>(null)
 const subscriptionsReport = ref<SubscriptionsReport | null>(null)
 const deliveriesReport = ref<DeliveriesReport | null>(null)
 const auditLogs = ref<AuditLog[]>([])
+
+const filterRestaurantId = ref('')
+const filterStatus = ref('')
+const filterRegion = ref('')
+const filterPaymentMethod = ref('')
 
 const restName = ref('')
 const restDocument = ref('')
@@ -86,8 +93,15 @@ async function loadAllData() {
 
   try {
     const results = await Promise.allSettled([
-      api.get<AdminDashboard>('/admin/dashboard'),
-      api.get<Restaurant[]>('/restaurantes'),
+      api.get<AdminDashboard>('/admin/dashboard', {
+        params: {
+          restaurantId: filterRestaurantId.value || undefined,
+          status: filterStatus.value || undefined,
+          region: filterRegion.value.trim() || undefined,
+          paymentMethod: filterPaymentMethod.value || undefined,
+        },
+      }),
+      api.get<Restaurant[]>('/restaurantes', { params: { includeAll: true } }),
       api.get<Category[]>('/categorias'),
       api.get<Plan[]>('/planos'),
       api.get<Coupon[]>('/cupons'),
@@ -98,6 +112,7 @@ async function loadAllData() {
       api.get<SubscriptionsReport>('/admin/relatorios/assinaturas'),
       api.get<DeliveriesReport>('/admin/relatorios/entregas'),
       api.get<AuditLog[]>('/admin/auditoria'),
+      api.get<Order[]>('/admin/pedidos'),
     ])
 
     if (results[0].status === 'fulfilled') stats.value = results[0].value.data
@@ -122,6 +137,7 @@ async function loadAllData() {
     if (results[9].status === 'fulfilled') subscriptionsReport.value = results[9].value.data
     if (results[10].status === 'fulfilled') deliveriesReport.value = results[10].value.data
     if (results[11].status === 'fulfilled') auditLogs.value = results[11].value.data
+    if (results[12].status === 'fulfilled') adminOrders.value = results[12].value.data
   } catch (error) {
     errorMessage.value = getErrorMessage(error, 'Erro ao carregar dados do painel administrativo.')
   } finally {
@@ -362,14 +378,60 @@ async function handleProcessPayout(payout: Payout) {
   }
 }
 
+async function handleAdminCancelOrder(order: Order) {
+  errorMessage.value = ''
+  successMessage.value = ''
+  try {
+    await api.patch(`/pedidos/${order.id}/cancelar`)
+    order.status = 'Cancelled'
+    successMessage.value = `Pedido #${order.id.slice(0, 8)} cancelado.`
+    await loadAllData()
+  } catch (error) {
+    errorMessage.value = getErrorMessage(error, 'Não foi possível cancelar o pedido.')
+  }
+}
+
+async function handleAdminRefundOrder(order: Order) {
+  errorMessage.value = ''
+  successMessage.value = ''
+  try {
+    await api.post(`/pagamentos/${order.id}/estornar`, {
+      reason: 'Estorno administrativo solicitado pelo painel',
+    })
+    order.status = 'Refunded'
+    successMessage.value = `Pagamento do pedido #${order.id.slice(0, 8)} estornado com sucesso.`
+    await loadAllData()
+  } catch (error) {
+    errorMessage.value = getErrorMessage(error, 'Não foi possível estornar o pagamento do pedido.')
+  }
+}
+
+async function handleAdminForceCompleteDelivery(order: Order) {
+  errorMessage.value = ''
+  successMessage.value = ''
+  try {
+    await api.patch(`/entregas/${order.id}/status`, {
+      status: 'Delivered',
+    })
+    order.status = 'Delivered'
+    successMessage.value = `Entrega do pedido #${order.id.slice(0, 8)} finalizada excepcionalmente pelo suporte.`
+    await loadAllData()
+  } catch (error) {
+    errorMessage.value = getErrorMessage(error, 'Não foi possível finalizar a entrega.')
+  }
+}
+
 function getOwnerName(ownerId: string): string {
   const found = users.value.find((u) => u.id === ownerId)
   return found ? `${found.name} (${found.email})` : ownerId
 }
 
 function getRestaurantName(restaurantId: string): string {
-  const found = restaurants.value.find((r) => r.id === restaurantId)
-  return found ? found.name : restaurantId
+  const foundRest = restaurants.value.find((r) => r.id === restaurantId)
+  if (foundRest) return `${foundRest.name} (Restaurante)`
+  const foundCourier = couriers.value.find((c) => c.id === restaurantId)
+  if (foundCourier) return `${foundCourier.name} (Entregador)`
+  return restaurantId
 }
 
 onMounted(() => {
@@ -415,40 +477,119 @@ onMounted(() => {
         {{ successMessage }}
       </div>
 
-      <!-- Indicadores Gerais -->
-      <section v-if="stats" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div class="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
-          <div class="flex items-center justify-between text-stone-500">
-            <span class="text-sm font-medium">Usuários</span>
-            <Users class="h-5 w-5 text-stone-400" />
+      <!-- Indicadores Gerais e Barra de Filtros -->
+      <section v-if="stats" class="space-y-4">
+        <div class="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+          <div class="grid gap-3 sm:grid-cols-5">
+            <div>
+              <label class="block text-[11px] font-medium text-stone-600">Restaurante</label>
+              <select
+                v-model="filterRestaurantId"
+                class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs text-stone-800"
+              >
+                <option value="">Todos os restaurantes</option>
+                <option v-for="r in restaurants" :key="r.id" :value="r.id">
+                  {{ r.name }}
+                </option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-medium text-stone-600">Status do Pedido</label>
+              <select
+                v-model="filterStatus"
+                class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs text-stone-800"
+              >
+                <option value="">Todos os status</option>
+                <option value="Paid">Pago</option>
+                <option value="Preparing">Em preparo</option>
+                <option value="InTransit">Em rota</option>
+                <option value="Delivered">Entregue</option>
+                <option value="Cancelled">Cancelado</option>
+                <option value="Refunded">Estornado</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-medium text-stone-600">Forma de Pagamento</label>
+              <select
+                v-model="filterPaymentMethod"
+                class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs text-stone-800"
+              >
+                <option value="">Todas</option>
+                <option value="PIX">PIX</option>
+                <option value="CreditCard">Cartão de Crédito</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-medium text-stone-600">Região / Bairro</label>
+              <input
+                v-model="filterRegion"
+                type="text"
+                placeholder="Ex: Vila Madalena"
+                class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs text-stone-800"
+              />
+            </div>
+
+            <div class="flex items-end">
+              <button
+                type="button"
+                class="w-full rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-stone-800"
+                @click="loadAllData"
+              >
+                Aplicar filtros
+              </button>
+            </div>
           </div>
-          <p class="mt-3 text-2xl font-bold text-stone-900">{{ stats.totalUsers }}</p>
         </div>
 
-        <div class="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
-          <div class="flex items-center justify-between text-stone-500">
-            <span class="text-sm font-medium">Restaurantes</span>
-            <Store class="h-5 w-5 text-orange-600" />
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div class="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
+            <div class="flex items-center justify-between text-stone-500">
+              <span class="text-sm font-medium">Usuários</span>
+              <Users class="h-5 w-5 text-stone-400" />
+            </div>
+            <p class="mt-3 text-2xl font-bold text-stone-900">{{ stats.totalUsers }}</p>
+            <p v-if="stats.totalCouriers !== undefined" class="mt-1 text-xs text-stone-500">
+              Entregadores: {{ stats.totalCouriers }}
+            </p>
           </div>
-          <p class="mt-3 text-2xl font-bold text-stone-900">{{ stats.totalRestaurants }}</p>
-        </div>
 
-        <div class="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
-          <div class="flex items-center justify-between text-stone-500">
-            <span class="text-sm font-medium">Pedidos</span>
-            <ShoppingBag class="h-5 w-5 text-blue-600" />
+          <div class="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
+            <div class="flex items-center justify-between text-stone-500">
+              <span class="text-sm font-medium">Restaurantes</span>
+              <Store class="h-5 w-5 text-orange-600" />
+            </div>
+            <p class="mt-3 text-2xl font-bold text-stone-900">{{ stats.totalRestaurants }}</p>
+            <p v-if="stats.averageDeliveryMinutes" class="mt-1 text-xs text-stone-500">
+              Tempo médio: ~{{ stats.averageDeliveryMinutes }} min
+            </p>
           </div>
-          <p class="mt-3 text-2xl font-bold text-stone-900">{{ stats.totalOrders }}</p>
-        </div>
 
-        <div class="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
-          <div class="flex items-center justify-between text-stone-500">
-            <span class="text-sm font-medium">Receita Total</span>
-            <DollarSign class="h-5 w-5 text-green-600" />
+          <div class="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
+            <div class="flex items-center justify-between text-stone-500">
+              <span class="text-sm font-medium">Pedidos</span>
+              <ShoppingBag class="h-5 w-5 text-blue-600" />
+            </div>
+            <p class="mt-3 text-2xl font-bold text-stone-900">{{ stats.totalOrders }}</p>
+            <p class="mt-1 text-xs text-stone-500">
+              Ticket médio: {{ formatCurrency(stats.averageTicket || 0) }} · Cancelados: {{ stats.cancelledOrders || 0 }}
+            </p>
           </div>
-          <p class="mt-3 text-2xl font-bold text-stone-900">
-            {{ formatCurrency(stats.totalRevenue) }}
-          </p>
+
+          <div class="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
+            <div class="flex items-center justify-between text-stone-500">
+              <span class="text-sm font-medium">Receita Total</span>
+              <DollarSign class="h-5 w-5 text-green-600" />
+            </div>
+            <p class="mt-3 text-2xl font-bold text-stone-900">
+              {{ formatCurrency(stats.totalRevenue) }}
+            </p>
+            <p class="mt-1 text-xs text-stone-500">
+              MRR: {{ formatCurrency(stats.monthlyRecurringRevenue || 0) }} · Churn: {{ stats.churnRatePercentage || 0 }}%
+            </p>
+          </div>
         </div>
       </section>
 
@@ -494,6 +635,20 @@ onMounted(() => {
         >
           <Users class="h-4 w-4" />
           Usuários & Entregadores
+        </button>
+
+        <button
+          type="button"
+          class="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+          :class="
+            activeTab === 'pedidos'
+              ? 'bg-brand-600 text-white'
+              : 'bg-white text-stone-700 hover:bg-stone-100'
+          "
+          @click="activeTab = 'pedidos'"
+        >
+          <ShoppingBag class="h-4 w-4" />
+          Pedidos & Estornos
         </button>
 
         <button
@@ -1038,7 +1193,92 @@ onMounted(() => {
         </div>
       </section>
 
-      <!-- ABA 4: FINANCEIRO, RELATÓRIOS & AUDITORIA -->
+      <!-- ABA 4: PEDIDOS & ESTORNOS -->
+      <section v-else-if="activeTab === 'pedidos'" class="space-y-4">
+        <div class="rounded-xl border border-stone-200 bg-white p-6 shadow-sm">
+          <h2 class="text-base font-semibold text-stone-900">
+            Gestão Global de Pedidos & Estornos ({{ adminOrders.length }})
+          </h2>
+          <p class="mt-0.5 text-xs text-stone-500">
+            Consulte todos os pedidos da plataforma e execute cancelamentos administrativos ou estornos de pagamento.
+          </p>
+
+          <div v-if="adminOrders.length === 0" class="py-8 text-center text-sm text-stone-500">
+            Nenhum pedido registrado no momento.
+          </div>
+
+          <div v-else class="mt-4 space-y-3">
+            <div
+              v-for="ord in adminOrders"
+              :key="ord.id"
+              class="flex flex-col justify-between gap-3 rounded-lg border border-stone-200 p-4 sm:flex-row sm:items-center"
+            >
+              <div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="font-bold text-stone-900">Pedido #{{ ord.id.slice(0, 8) }}</span>
+                  <span
+                    class="rounded-full px-2.5 py-0.5 text-xs font-semibold"
+                    :class="
+                      ord.status === 'Delivered'
+                        ? 'bg-green-100 text-green-800'
+                        : ord.status === 'Cancelled' || ord.status === 'Refunded'
+                          ? 'bg-red-100 text-red-800'
+                          : 'bg-amber-100 text-amber-800'
+                    "
+                  >
+                    {{ ord.status }}
+                  </span>
+                  <span class="text-sm font-bold text-stone-900">
+                    {{ formatCurrency(ord.totalAmount) }}
+                  </span>
+                </div>
+                <p class="mt-1 text-xs text-stone-600">
+                  <strong>Restaurante:</strong> {{ ord.restaurantName }} ·
+                  <strong>Cliente:</strong> {{ ord.customerName || ord.customerId }} ·
+                  {{ new Date(ord.createdAt).toLocaleString('pt-BR') }}
+                </p>
+                <p v-if="ord.deliveryAddress" class="text-xs text-stone-500">
+                  Entrega: {{ ord.deliveryAddress }}
+                </p>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  v-if="
+                    ord.status === 'DriverAssigned' ||
+                    ord.status === 'PickedUp' ||
+                    ord.status === 'InTransit'
+                  "
+                  type="button"
+                  class="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700"
+                  title="Liberação excepcional de entrega pelo suporte sem exigir o PIN do entregador"
+                  @click="handleAdminForceCompleteDelivery(ord)"
+                >
+                  Finalizar entrega (Suporte s/ PIN)
+                </button>
+                <button
+                  v-if="ord.status !== 'Cancelled' && ord.status !== 'Refunded' && ord.status !== 'Delivered'"
+                  type="button"
+                  class="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+                  @click="handleAdminCancelOrder(ord)"
+                >
+                  Cancelar pedido
+                </button>
+                <button
+                  v-if="ord.status !== 'Refunded'"
+                  type="button"
+                  class="rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-stone-800"
+                  @click="handleAdminRefundOrder(ord)"
+                >
+                  Estornar pagamento
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ABA 5: FINANCEIRO, RELATÓRIOS & AUDITORIA -->
       <section v-else-if="activeTab === 'financeiro'" class="space-y-6">
         <div class="grid gap-4 sm:grid-cols-3">
           <div class="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">

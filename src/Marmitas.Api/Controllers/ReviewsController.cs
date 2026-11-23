@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Marmitas.Application.Common.Interfaces;
 using Marmitas.Application.Orders;
+using Marmitas.Application.Platform.Dtos;
 using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -191,6 +192,9 @@ public class ReviewsController : ControllerBase
         if (review == null)
             throw new Exception("Avaliação não encontrada.");
 
+        if (review.UserId != GetUserId() && !User.IsInRole("admin") && !User.IsInRole("super_admin"))
+            return Forbid();
+
         review.Rating = request.Rating;
         review.Comment = request.Comment ?? string.Empty;
 
@@ -206,6 +210,9 @@ public class ReviewsController : ControllerBase
         if (review == null)
             throw new Exception("Avaliação não encontrada.");
 
+        if (review.UserId != GetUserId() && !User.IsInRole("admin") && !User.IsInRole("super_admin"))
+            return Forbid();
+
         _payments.RemoveReview(review);
         await _payments.SaveChangesAsync();
         return NoContent();
@@ -216,20 +223,4 @@ public class ReviewsController : ControllerBase
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         return Guid.TryParse(sub, out var parsed) ? parsed : Guid.Empty;
     }
-}
-
-public class SaveReviewRequest
-{
-    public int Rating { get; set; } = 5;
-    public string? Comment { get; set; }
-}
-
-public class CreateTypedReviewRequest
-{
-    public Guid? OrderId { get; set; }
-    public Guid? RestaurantId { get; set; }
-    public string? RestaurantName { get; set; }
-    public string? AuthorName { get; set; }
-    public int Rating { get; set; } = 5;
-    public string Comment { get; set; } = string.Empty;
 }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Marmitas.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
@@ -5,6 +6,8 @@ namespace Marmitas.Infrastructure.Persistence;
 
 public class AppDbContext : DbContext
 {
+    private bool _savingAudit;
+
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
     {
     }
@@ -16,11 +19,16 @@ public class AppDbContext : DbContext
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
 
     public DbSet<Restaurant> Restaurants => Set<Restaurant>();
+    public DbSet<RestaurantUser> RestaurantUsers => Set<RestaurantUser>();
+    public DbSet<RestaurantHour> RestaurantHours => Set<RestaurantHour>();
+    public DbSet<DeliveryZone> DeliveryZones => Set<DeliveryZone>();
     public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
     public DbSet<Product> Products => Set<Product>();
+    public DbSet<ProductOption> ProductOptions => Set<ProductOption>();
 
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+    public DbSet<OrderStatusHistory> OrderStatusHistories => Set<OrderStatusHistory>();
 
     public DbSet<Address> Addresses => Set<Address>();
     public DbSet<Favorite> Favorites => Set<Favorite>();
@@ -31,15 +39,28 @@ public class AppDbContext : DbContext
     public DbSet<CouponUsage> CouponUsages => Set<CouponUsage>();
     public DbSet<Plan> Plans => Set<Plan>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
+    public DbSet<SubscriptionItem> SubscriptionItems => Set<SubscriptionItem>();
+    public DbSet<SubscriptionDelivery> SubscriptionDeliveries => Set<SubscriptionDelivery>();
 
     public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<PaymentTransaction> PaymentTransactions => Set<PaymentTransaction>();
+    public DbSet<Refund> Refunds => Set<Refund>();
     public DbSet<Payout> Payouts => Set<Payout>();
+    public DbSet<Commission> Commissions => Set<Commission>();
+    public DbSet<FinancialTransaction> FinancialTransactions => Set<FinancialTransaction>();
     public DbSet<Review> Reviews => Set<Review>();
 
     public DbSet<Courier> Couriers => Set<Courier>();
     public DbSet<CourierDocument> CourierDocuments => Set<CourierDocument>();
     public DbSet<CourierVehicle> CourierVehicles => Set<CourierVehicle>();
+    public DbSet<DriverLocation> DriverLocations => Set<DriverLocation>();
     public DbSet<Delivery> Deliveries => Set<Delivery>();
+
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
+    public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
+    public DbSet<UserConsent> UserConsents => Set<UserConsent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -66,10 +87,11 @@ public class AppDbContext : DbContext
         base.OnModelCreating(modelBuilder);
     }
 
-    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         UpdateTimestamps();
-        return base.SaveChangesAsync(cancellationToken);
+        CaptureAuditLogs();
+        return await base.SaveChangesAsync(cancellationToken);
     }
 
     private void UpdateTimestamps()
@@ -87,6 +109,92 @@ public class AppDbContext : DbContext
             {
                 entry.Entity.UpdatedAt = now;
             }
+        }
+    }
+
+    private static readonly HashSet<string> AuditedEntities = new(StringComparer.OrdinalIgnoreCase)
+    {
+        nameof(Order),
+        nameof(Payment),
+        nameof(Refund),
+        nameof(Payout),
+        nameof(Restaurant),
+        nameof(Product),
+        nameof(Plan),
+        nameof(Subscription),
+        nameof(Courier),
+        nameof(Coupon)
+    };
+
+    private void CaptureAuditLogs()
+    {
+        if (_savingAudit) return;
+
+        try
+        {
+            _savingAudit = true;
+            var now = DateTime.UtcNow;
+            var pendingAudits = new List<AuditLog>();
+
+            foreach (var entry in ChangeTracker.Entries<Entity>().ToList())
+            {
+                if (entry.Entity is AuditLog or DriverLocation or Notification or RefreshToken or IdempotencyRecord)
+                    continue;
+
+                if (entry.State is not (EntityState.Added or EntityState.Modified or EntityState.Deleted))
+                    continue;
+
+                var typeName = entry.Entity.GetType().Name;
+                if (!AuditedEntities.Contains(typeName))
+                    continue;
+
+                var action = entry.State switch
+                {
+                    EntityState.Added => $"{typeName.ToUpperInvariant()}_CREATED",
+                    EntityState.Modified => $"{typeName.ToUpperInvariant()}_UPDATED",
+                    EntityState.Deleted => $"{typeName.ToUpperInvariant()}_DELETED",
+                    _ => $"{typeName.ToUpperInvariant()}_CHANGED"
+                };
+
+                var newValues = new Dictionary<string, object?>();
+                var oldValues = new Dictionary<string, object?>();
+
+                foreach (var prop in entry.Properties)
+                {
+                    if (prop.Metadata.Name is "PasswordHash" or "MfaSecret" or "AddonsJson")
+                        continue;
+
+                    if (entry.State == EntityState.Added)
+                    {
+                        newValues[prop.Metadata.Name] = prop.CurrentValue;
+                    }
+                    else if (entry.State == EntityState.Modified && prop.IsModified)
+                    {
+                        oldValues[prop.Metadata.Name] = prop.OriginalValue;
+                        newValues[prop.Metadata.Name] = prop.CurrentValue;
+                    }
+                }
+
+                pendingAudits.Add(new AuditLog
+                {
+                    Action = action,
+                    EntityName = typeName,
+                    EntityId = entry.Entity.Id.ToString(),
+                    OldValues = oldValues.Count > 0 ? JsonSerializer.Serialize(oldValues) : null,
+                    NewValues = newValues.Count > 0 ? JsonSerializer.Serialize(newValues) : null,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+            }
+
+            if (pendingAudits.Count > 0)
+            {
+                AuditLogs.AddRange(pendingAudits);
+            }
+        }
+        finally
+        {
+            _savingAudit = false;
         }
     }
 }

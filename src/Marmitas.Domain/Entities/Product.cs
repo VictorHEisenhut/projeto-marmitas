@@ -7,6 +7,8 @@ public class Product : Entity
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public decimal Price { get; set; }
+    public decimal? PromotionalPrice { get; set; }
+    public int? DailyStock { get; set; }
     public bool IsActive { get; set; }
     public string? ImageUrl { get; set; }
     public bool AvailableInPlans { get; set; } = true;
@@ -32,7 +34,11 @@ public class Product : Entity
         ImageUrl = imageUrl;
     }
 
+    public decimal GetEffectivePrice() =>
+        PromotionalPrice.HasValue && PromotionalPrice.Value > 0 && PromotionalPrice.Value < Price
+            ? PromotionalPrice.Value
+            : Price;
+
     public void Deactivate() => IsActive = false;
     public void Activate() => IsActive = true;
 }
-

@@ -10,8 +10,14 @@ public interface ISubscriptionRepository
 
     Task<List<Subscription>> GetSubscriptionsByUserAsync(Guid userId);
     Task<List<Subscription>> GetAllSubscriptionsAsync();
+    Task<List<Subscription>> GetDueForRenewalAsync(DateTime referenceUtc);
     Task<Subscription?> GetSubscriptionByIdAsync(Guid id);
     Task AddSubscriptionAsync(Subscription subscription);
+
+    Task<List<SubscriptionDelivery>> GetSubscriptionDeliveriesAsync(Guid subscriptionId);
+    Task<SubscriptionDelivery?> GetSubscriptionDeliveryByIdAsync(Guid id);
+    Task AddSubscriptionDeliveryAsync(SubscriptionDelivery delivery);
+    void RemoveSubscriptionDelivery(SubscriptionDelivery delivery);
 
     Task<List<Coupon>> GetAllCouponsAsync();
     Task<Coupon?> GetCouponByIdAsync(Guid id);
@@ -23,4 +29,3 @@ public interface ISubscriptionRepository
 
     Task SaveChangesAsync();
 }
-

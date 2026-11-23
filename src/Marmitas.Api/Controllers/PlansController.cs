@@ -1,4 +1,5 @@
 using Marmitas.Application.Common.Interfaces;
+using Marmitas.Application.Platform.Dtos;
 using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -42,12 +43,25 @@ public class PlansController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Name))
             throw new Exception("O nome do plano é obrigatório.");
 
+        var mealsPerWeek = request.MealsPerWeek > 0 ? request.MealsPerWeek : 5;
+        var mealsPerMonth = request.MealsPerMonth.HasValue && request.MealsPerMonth.Value > 0
+            ? request.MealsPerMonth.Value
+            : mealsPerWeek * 4;
+
         var plan = new Plan
         {
             Name = request.Name.Trim(),
             Description = request.Description ?? string.Empty,
-            MealsPerWeek = request.MealsPerWeek,
+            MealsPerWeek = mealsPerWeek,
+            MealsPerMonth = mealsPerMonth,
             MonthlyPrice = request.MonthlyPrice,
+            Frequency = string.IsNullOrWhiteSpace(request.Frequency) ? "Monthly" : request.Frequency.Trim(),
+            AllowedDays = string.IsNullOrWhiteSpace(request.AllowedDays) ? "Segunda a Sexta" : request.AllowedDays.Trim(),
+            DeliveryWindow = string.IsNullOrWhiteSpace(request.DeliveryWindow) ? "11:00 às 14:30" : request.DeliveryWindow.Trim(),
+            DeliveryFee = request.DeliveryFee ?? 0m,
+            CancellationPolicy = string.IsNullOrWhiteSpace(request.CancellationPolicy)
+                ? "Cancelamento livre até o fim do ciclo vigente."
+                : request.CancellationPolicy.Trim(),
             IsActive = true
         };
 
@@ -68,8 +82,20 @@ public class PlansController : ControllerBase
         if (!string.IsNullOrWhiteSpace(request.Name))
             plan.Name = request.Name.Trim();
         plan.Description = request.Description ?? string.Empty;
-        plan.MealsPerWeek = request.MealsPerWeek;
+        plan.MealsPerWeek = request.MealsPerWeek > 0 ? request.MealsPerWeek : plan.MealsPerWeek;
+        plan.MealsPerMonth = request.MealsPerMonth ?? (plan.MealsPerWeek * 4);
         plan.MonthlyPrice = request.MonthlyPrice;
+
+        if (!string.IsNullOrWhiteSpace(request.Frequency))
+            plan.Frequency = request.Frequency.Trim();
+        if (!string.IsNullOrWhiteSpace(request.AllowedDays))
+            plan.AllowedDays = request.AllowedDays.Trim();
+        if (!string.IsNullOrWhiteSpace(request.DeliveryWindow))
+            plan.DeliveryWindow = request.DeliveryWindow.Trim();
+        if (request.DeliveryFee.HasValue)
+            plan.DeliveryFee = request.DeliveryFee.Value;
+        if (!string.IsNullOrWhiteSpace(request.CancellationPolicy))
+            plan.CancellationPolicy = request.CancellationPolicy.Trim();
 
         await _subscriptions.SaveChangesAsync();
         return Ok(plan);
@@ -87,12 +113,4 @@ public class PlansController : ControllerBase
         await _subscriptions.SaveChangesAsync();
         return NoContent();
     }
-}
-
-public class SavePlanRequest
-{
-    public string Name { get; set; } = string.Empty;
-    public string Description { get; set; } = string.Empty;
-    public int MealsPerWeek { get; set; }
-    public decimal MonthlyPrice { get; set; }
 }

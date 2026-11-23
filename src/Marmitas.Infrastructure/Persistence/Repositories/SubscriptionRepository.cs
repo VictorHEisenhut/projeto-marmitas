@@ -16,6 +16,7 @@ public class SubscriptionRepository : ISubscriptionRepository
     public Task<List<Plan>> GetActivePlansAsync()
     {
         return _context.Plans
+            .AsNoTracking()
             .Where(p => p.IsActive)
             .OrderBy(p => p.MonthlyPrice)
             .ToListAsync();
@@ -42,7 +43,15 @@ public class SubscriptionRepository : ISubscriptionRepository
     public Task<List<Subscription>> GetAllSubscriptionsAsync()
     {
         return _context.Subscriptions
+            .AsNoTracking()
             .OrderByDescending(s => s.CreatedAt)
+            .ToListAsync();
+    }
+
+    public Task<List<Subscription>> GetDueForRenewalAsync(DateTime referenceUtc)
+    {
+        return _context.Subscriptions
+            .Where(s => (s.Status == "Active" || s.Status == "GracePeriod") && s.NextBillingDate <= referenceUtc)
             .ToListAsync();
     }
 
@@ -56,9 +65,34 @@ public class SubscriptionRepository : ISubscriptionRepository
         await _context.Subscriptions.AddAsync(subscription);
     }
 
+    public Task<List<SubscriptionDelivery>> GetSubscriptionDeliveriesAsync(Guid subscriptionId)
+    {
+        return _context.SubscriptionDeliveries
+            .AsNoTracking()
+            .Where(d => d.SubscriptionId == subscriptionId)
+            .OrderBy(d => d.ScheduledDate)
+            .ToListAsync();
+    }
+
+    public Task<SubscriptionDelivery?> GetSubscriptionDeliveryByIdAsync(Guid id)
+    {
+        return _context.SubscriptionDeliveries.FirstOrDefaultAsync(d => d.Id == id);
+    }
+
+    public async Task AddSubscriptionDeliveryAsync(SubscriptionDelivery delivery)
+    {
+        await _context.SubscriptionDeliveries.AddAsync(delivery);
+    }
+
+    public void RemoveSubscriptionDelivery(SubscriptionDelivery delivery)
+    {
+        _context.SubscriptionDeliveries.Remove(delivery);
+    }
+
     public Task<List<Coupon>> GetAllCouponsAsync()
     {
         return _context.Coupons
+            .AsNoTracking()
             .OrderByDescending(c => c.CreatedAt)
             .ToListAsync();
     }
@@ -87,6 +121,7 @@ public class SubscriptionRepository : ISubscriptionRepository
     public Task<List<CouponUsage>> GetCouponUsagesAsync(Guid couponId)
     {
         return _context.CouponUsages
+            .AsNoTracking()
             .Where(u => u.CouponId == couponId)
             .OrderByDescending(u => u.UsedAt)
             .ToListAsync();
@@ -102,4 +137,3 @@ public class SubscriptionRepository : ISubscriptionRepository
         return _context.SaveChangesAsync();
     }
 }
-

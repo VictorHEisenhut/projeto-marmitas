@@ -19,10 +19,13 @@ import type {
   CourierEarnings,
   Delivery,
   Favorite,
+  NotificationPreferences,
+  Plan,
   Product,
   Restaurant,
   ReviewItem,
   Subscription,
+  SubscriptionDelivery,
   User,
 } from '@/types'
 
@@ -44,12 +47,26 @@ const savingProfile = ref(false)
 
 // Estados de Cliente
 const subscriptions = ref<Subscription[]>([])
+const availablePlans = ref<Plan[]>([])
+const planSelectionBySub = ref<Record<string, string>>({})
+const scheduledBySub = ref<Record<string, SubscriptionDelivery[]>>({})
+const scheduleDateBySub = ref<Record<string, string>>({})
+const scheduleWindowBySub = ref<Record<string, string>>({})
+const scheduleMealsBySub = ref<Record<string, number>>({})
 const addresses = ref<Address[]>([])
 const favorites = ref<Favorite[]>([])
 const restaurants = ref<Restaurant[]>([])
 const restaurantsMap = ref<Record<string, string>>({})
 const loading = ref(true)
 
+const notificationPrefs = ref<NotificationPreferences>({
+  emailEnabled: true,
+  pushEnabled: true,
+  smsEnabled: false,
+})
+const savingPrefs = ref(false)
+
+const editingAddressId = ref<string | null>(null)
 const street = ref('')
 const number = ref('')
 const complement = ref('')
@@ -137,10 +154,15 @@ async function loadAccountData() {
   error.value = ''
 
   try {
-    const [restRes, custRevRes] = await Promise.allSettled([
+    const [restRes, custRevRes, prefsRes] = await Promise.allSettled([
       api.get<Restaurant[]>('/restaurantes'),
       api.get<ReviewItem[]>('/avaliacoes/clientes'),
+      api.get<NotificationPreferences>('/usuarios/me/preferencias-notificacao'),
     ])
+
+    if (prefsRes.status === 'fulfilled' && prefsRes.value.data) {
+      notificationPrefs.value = prefsRes.value.data
+    }
 
     if (restRes.status === 'fulfilled') {
       restaurants.value = restRes.value.data
@@ -176,13 +198,23 @@ async function loadAccountData() {
     }
 
     if (!isDriverOnly.value) {
-      const [subRes, addrRes, favRes] = await Promise.allSettled([
+      const [subRes, addrRes, favRes, planRes] = await Promise.allSettled([
         api.get<Subscription[]>('/assinaturas'),
         api.get<Address[]>('/usuarios/me/enderecos'),
         api.get<Favorite[]>('/usuarios/me/favoritos'),
+        api.get<Plan[]>('/planos'),
       ])
 
-      if (subRes.status === 'fulfilled') subscriptions.value = subRes.value.data
+      if (planRes.status === 'fulfilled') availablePlans.value = planRes.value.data
+      if (subRes.status === 'fulfilled') {
+        subscriptions.value = subRes.value.data
+        for (const sub of subRes.value.data) {
+          planSelectionBySub.value[sub.id] = sub.planId
+          scheduleWindowBySub.value[sub.id] = '11:30 - 13:30'
+          scheduleMealsBySub.value[sub.id] = 1
+          void loadSubscriptionSchedules(sub.id)
+        }
+      }
       if (addrRes.status === 'fulfilled') addresses.value = addrRes.value.data
       if (favRes.status === 'fulfilled') favorites.value = favRes.value.data
     }
@@ -285,6 +317,105 @@ async function handleSubscriptionAction(id: string, action: 'pausar' | 'reativar
   }
 }
 
+async function loadSubscriptionSchedules(subscriptionId: string) {
+  try {
+    const { data } = await api.get<SubscriptionDelivery[]>(`/assinaturas/${subscriptionId}/agendamentos`)
+    scheduledBySub.value[subscriptionId] = data
+  } catch {
+    scheduledBySub.value[subscriptionId] = []
+  }
+}
+
+async function handleChangeSubscriptionPlan(subscriptionId: string) {
+  error.value = ''
+  successMessage.value = ''
+  const newPlanId = planSelectionBySub.value[subscriptionId]
+  if (!newPlanId) return
+
+  try {
+    await api.patch(`/assinaturas/${subscriptionId}/alterar-plano`, { newPlanId })
+    const { data } = await api.get<Subscription[]>('/assinaturas')
+    subscriptions.value = data
+    successMessage.value = 'Plano da assinatura alterado com cálculo proporcional (prorrata).'
+  } catch (err) {
+    error.value = getErrorMessage(err, 'Não foi possível alterar o plano da assinatura.')
+  }
+}
+
+async function handleScheduleSubscriptionDelivery(subscriptionId: string) {
+  error.value = ''
+  successMessage.value = ''
+  const scheduledDate = scheduleDateBySub.value[subscriptionId]
+  const deliveryWindow = scheduleWindowBySub.value[subscriptionId] || '11:30 - 13:30'
+  const mealsCount = scheduleMealsBySub.value[subscriptionId] || 1
+
+  try {
+    await api.post(`/assinaturas/${subscriptionId}/agendamentos`, {
+      scheduledDate: scheduledDate ? new Date(scheduledDate).toISOString() : undefined,
+      deliveryWindow,
+      mealsCount,
+    })
+    scheduleDateBySub.value[subscriptionId] = ''
+    await loadSubscriptionSchedules(subscriptionId)
+    successMessage.value = 'Entrega da assinatura agendada com sucesso.'
+  } catch (err) {
+    error.value = getErrorMessage(err, 'Não foi possível agendar a entrega.')
+  }
+}
+
+async function handleCancelScheduledDelivery(subscriptionId: string, deliveryId: string) {
+  error.value = ''
+  try {
+    await api.delete(`/assinaturas/${subscriptionId}/agendamentos/${deliveryId}`)
+    await loadSubscriptionSchedules(subscriptionId)
+    successMessage.value = 'Agendamento cancelado.'
+  } catch (err) {
+    error.value = getErrorMessage(err, 'Não foi possível cancelar o agendamento.')
+  }
+}
+
+async function handleSaveNotificationPreferences() {
+  error.value = ''
+  successMessage.value = ''
+  savingPrefs.value = true
+  try {
+    const { data } = await api.put<NotificationPreferences>(
+      '/usuarios/me/preferencias-notificacao',
+      notificationPrefs.value,
+    )
+    notificationPrefs.value = data
+    successMessage.value = 'Preferências de notificação salvas com sucesso.'
+  } catch (err) {
+    error.value = getErrorMessage(err, 'Não foi possível salvar as preferências de notificação.')
+  } finally {
+    savingPrefs.value = false
+  }
+}
+
+function startEditAddress(addr: Address) {
+  editingAddressId.value = addr.id
+  street.value = addr.street
+  number.value = addr.number
+  complement.value = addr.complement || ''
+  neighborhood.value = addr.neighborhood
+  city.value = addr.city
+  state.value = addr.state
+  zipCode.value = addr.zipCode
+  isMain.value = addr.isMain
+}
+
+function cancelEditAddress() {
+  editingAddressId.value = null
+  street.value = ''
+  number.value = ''
+  complement.value = ''
+  neighborhood.value = ''
+  city.value = ''
+  state.value = ''
+  zipCode.value = ''
+  isMain.value = false
+}
+
 async function handleAddAddress() {
   error.value = ''
   successMessage.value = ''
@@ -296,7 +427,7 @@ async function handleAddAddress() {
 
   savingAddress.value = true
   try {
-    await api.post('/usuarios/me/enderecos', {
+    const payload = {
       street: street.value.trim(),
       number: number.value.trim() || 'S/N',
       complement: complement.value.trim() || null,
@@ -305,22 +436,22 @@ async function handleAddAddress() {
       state: state.value.trim() || 'SP',
       zipCode: zipCode.value.trim(),
       isMain: isMain.value,
-    })
+    }
 
-    street.value = ''
-    number.value = ''
-    complement.value = ''
-    neighborhood.value = ''
-    city.value = ''
-    state.value = ''
-    zipCode.value = ''
-    isMain.value = false
+    if (editingAddressId.value) {
+      await api.put(`/usuarios/me/enderecos/${editingAddressId.value}`, payload)
+      successMessage.value = 'Endereço atualizado com sucesso.'
+    } else {
+      await api.post('/usuarios/me/enderecos', payload)
+      successMessage.value = 'Endereço adicionado.'
+    }
+
+    cancelEditAddress()
 
     const { data } = await api.get<Address[]>('/usuarios/me/enderecos')
     addresses.value = data
-    successMessage.value = 'Endereço adicionado.'
   } catch (err) {
-    error.value = getErrorMessage(err, 'Erro ao cadastrar endereço.')
+    error.value = getErrorMessage(err, 'Erro ao salvar endereço.')
   } finally {
     savingAddress.value = false
   }
@@ -354,6 +485,25 @@ async function handleRemoveFavorite(id: string) {
     favorites.value = favorites.value.filter((f) => f.id !== id)
   } catch (err) {
     error.value = getErrorMessage(err, 'Erro ao remover favorito.')
+  }
+}
+
+async function handleLookupZipCode() {
+  const clean = zipCode.value.replace(/\D/g, '')
+  if (clean.length !== 8) return
+  try {
+    const { data } = await api.get<{
+      street: string
+      neighborhood: string
+      city: string
+      state: string
+    }>(`/geolocalizacao/cep/${clean}`)
+    if (data.street && !street.value) street.value = data.street
+    if (data.neighborhood && !neighborhood.value) neighborhood.value = data.neighborhood
+    if (data.city && !city.value) city.value = data.city
+    if (data.state && !state.value) state.value = data.state
+  } catch {
+    // Mantém preenchimento manual se CEP não for localizado
   }
 }
 
@@ -439,6 +589,51 @@ onMounted(() => {
             </button>
           </div>
         </form>
+
+        <div class="mt-6 border-t border-stone-100 pt-5">
+          <h3 class="text-sm font-bold text-stone-900">Preferências de notificação</h3>
+          <form
+            class="mt-3 flex flex-wrap items-center justify-between gap-4"
+            @submit.prevent="handleSaveNotificationPreferences"
+          >
+            <div class="flex flex-wrap items-center gap-6 text-sm text-stone-700">
+              <label class="inline-flex items-center gap-2 cursor-pointer">
+                <input
+                  v-model="notificationPrefs.emailEnabled"
+                  type="checkbox"
+                  class="rounded border-stone-300 text-brand-600"
+                />
+                <span>Notificações por E-mail</span>
+              </label>
+
+              <label class="inline-flex items-center gap-2 cursor-pointer">
+                <input
+                  v-model="notificationPrefs.pushEnabled"
+                  type="checkbox"
+                  class="rounded border-stone-300 text-brand-600"
+                />
+                <span>Notificações Push</span>
+              </label>
+
+              <label class="inline-flex items-center gap-2 cursor-pointer">
+                <input
+                  v-model="notificationPrefs.smsEnabled"
+                  type="checkbox"
+                  class="rounded border-stone-300 text-brand-600"
+                />
+                <span>Alertas por SMS</span>
+              </label>
+            </div>
+
+            <button
+              type="submit"
+              :disabled="savingPrefs"
+              class="rounded-lg border border-stone-300 bg-stone-50 px-3.5 py-1.5 text-xs font-semibold text-stone-700 hover:bg-stone-100 disabled:opacity-50"
+            >
+              {{ savingPrefs ? 'Salvando...' : 'Salvar preferências' }}
+            </button>
+          </form>
+        </div>
       </section>
 
       <!-- ========================================================================= -->
@@ -864,6 +1059,92 @@ onMounted(() => {
                 <p class="mt-1 text-xs text-stone-500">
                   Próxima cobrança: {{ new Date(sub.nextBillingDate).toLocaleDateString('pt-BR') }}
                 </p>
+                <p
+                  v-if="sub.totalMealsInCycle !== undefined"
+                  class="mt-1 text-xs font-medium text-stone-700"
+                >
+                  Franquia do ciclo: {{ sub.usedMealsInCycle ?? 0 }} / {{ sub.totalMealsInCycle }} refeições utilizadas
+                </p>
+
+                <!-- Upgrade / Downgrade de Plano -->
+                <div
+                  v-if="sub.status === 'Active' && availablePlans.length > 0"
+                  class="mt-3 rounded-lg border border-stone-200 bg-stone-50 p-2.5 space-y-2"
+                >
+                  <label class="block text-[11px] font-semibold text-stone-700">
+                    Alterar plano (Upgrade / Downgrade com prorrata)
+                  </label>
+                  <div class="flex gap-2">
+                    <select
+                      v-model="planSelectionBySub[sub.id]"
+                      class="block flex-1 rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs text-stone-800"
+                    >
+                      <option v-for="p in availablePlans" :key="p.id" :value="p.id">
+                        {{ p.name }} ({{ formatCurrency(p.monthlyPrice) }})
+                      </option>
+                    </select>
+                    <button
+                      type="button"
+                      class="rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-stone-800"
+                      @click="handleChangeSubscriptionPlan(sub.id)"
+                    >
+                      Trocar plano
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Agendamento de Entregas da Assinatura -->
+                <div
+                  v-if="sub.status === 'Active'"
+                  class="mt-3 rounded-lg border border-stone-200 bg-stone-50 p-2.5 space-y-2"
+                >
+                  <label class="block text-[11px] font-semibold text-stone-700">
+                    Programar entregas do ciclo
+                  </label>
+                  <div class="grid grid-cols-3 gap-1.5">
+                    <input
+                      v-model="scheduleDateBySub[sub.id]"
+                      type="date"
+                      class="rounded border border-stone-300 bg-white px-2 py-1 text-xs"
+                    />
+                    <input
+                      v-model="scheduleWindowBySub[sub.id]"
+                      type="text"
+                      placeholder="11:30 - 13:30"
+                      class="rounded border border-stone-300 bg-white px-2 py-1 text-xs"
+                    />
+                    <button
+                      type="button"
+                      class="rounded bg-brand-600 px-2 py-1 text-xs font-semibold text-white hover:bg-brand-700"
+                      @click="handleScheduleSubscriptionDelivery(sub.id)"
+                    >
+                      Agendar
+                    </button>
+                  </div>
+
+                  <ul
+                    v-if="scheduledBySub[sub.id]?.length"
+                    class="divide-y divide-stone-200 pt-1 text-[11px] text-stone-700"
+                  >
+                    <li
+                      v-for="item in scheduledBySub[sub.id]"
+                      :key="item.id"
+                      class="flex items-center justify-between py-1"
+                    >
+                      <span>
+                        {{ new Date(item.scheduledDate).toLocaleDateString('pt-BR') }} ·
+                        {{ item.deliveryWindow }} ({{ item.mealsCount }} ref.)
+                      </span>
+                      <button
+                        type="button"
+                        class="text-red-600 hover:underline"
+                        @click="handleCancelScheduledDelivery(sub.id, item.id)"
+                      >
+                        Cancelar
+                      </button>
+                    </li>
+                  </ul>
+                </div>
               </div>
 
               <div class="mt-4 flex flex-wrap gap-2 border-t border-stone-100 pt-3">
@@ -932,15 +1213,23 @@ onMounted(() => {
               </div>
 
               <div class="mt-4 flex items-center justify-between border-t border-stone-100 pt-3">
-                <button
-                  v-if="!addr.isMain"
-                  type="button"
-                  class="text-xs font-medium text-brand-700 hover:underline"
-                  @click="handleSetMainAddress(addr.id)"
-                >
-                  Definir como principal
-                </button>
-                <span v-else />
+                <div class="flex items-center gap-3">
+                  <button
+                    v-if="!addr.isMain"
+                    type="button"
+                    class="text-xs font-medium text-brand-700 hover:underline"
+                    @click="handleSetMainAddress(addr.id)"
+                  >
+                    Definir como principal
+                  </button>
+                  <button
+                    type="button"
+                    class="text-xs font-medium text-stone-600 hover:text-stone-900 hover:underline"
+                    @click="startEditAddress(addr)"
+                  >
+                    Editar
+                  </button>
+                </div>
 
                 <button
                   type="button"
@@ -957,7 +1246,19 @@ onMounted(() => {
             class="rounded-xl border border-stone-200 bg-white p-6 shadow-sm"
             @submit.prevent="handleAddAddress"
           >
-            <h3 class="text-sm font-bold text-stone-900">Adicionar novo endereço</h3>
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-stone-900">
+                {{ editingAddressId ? 'Editar endereço' : 'Adicionar novo endereço' }}
+              </h3>
+              <button
+                v-if="editingAddressId"
+                type="button"
+                class="text-xs font-medium text-stone-500 hover:text-stone-800"
+                @click="cancelEditAddress"
+              >
+                Cancelar edição
+              </button>
+            </div>
 
             <div class="mt-4 grid gap-3 sm:grid-cols-3">
               <div class="sm:col-span-2">
@@ -1005,6 +1306,7 @@ onMounted(() => {
                   type="text"
                   placeholder="00000-000"
                   class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none"
+                  @blur="handleLookupZipCode"
                 />
               </div>
 
@@ -1041,7 +1343,13 @@ onMounted(() => {
                 :disabled="savingAddress"
                 class="rounded-lg bg-stone-900 px-4 py-2 text-sm font-semibold text-white hover:bg-stone-800 disabled:opacity-50"
               >
-                {{ savingAddress ? 'Adicionando...' : 'Adicionar endereço' }}
+                {{
+                  savingAddress
+                    ? 'Salvando...'
+                    : editingAddressId
+                      ? 'Salvar endereço'
+                      : 'Adicionar endereço'
+                }}
               </button>
             </div>
           </form>

@@ -16,13 +16,14 @@ public class DeliveryRepository : IDeliveryRepository
     public Task<List<Courier>> GetAllCouriersAsync()
     {
         return _context.Couriers
+            .AsNoTracking()
             .OrderByDescending(c => c.CreatedAt)
             .ToListAsync();
     }
 
     public Task<Courier?> GetCourierByIdAsync(Guid id)
     {
-        return _context.Couriers.FirstOrDefaultAsync(c => c.Id == id);
+        return _context.Couriers.FirstOrDefaultAsync(c => c.Id == id || c.UserId == id);
     }
 
     public Task<Courier?> GetCourierByUserIdAsync(Guid userId)
@@ -35,10 +36,11 @@ public class DeliveryRepository : IDeliveryRepository
         await _context.Couriers.AddAsync(courier);
     }
 
-    public Task<List<CourierDocument>> GetDocumentsByCourierAsync(Guid courierId)
+    public async Task<List<CourierDocument>> GetDocumentsByCourierAsync(Guid courierOrUserId)
     {
-        return _context.CourierDocuments
-            .Where(d => d.CourierId == courierId)
+        var ids = await ResolveCourierIdsAsync(courierOrUserId);
+        return await _context.CourierDocuments
+            .Where(d => ids.Contains(d.CourierId))
             .OrderByDescending(d => d.CreatedAt)
             .ToListAsync();
     }
@@ -48,10 +50,11 @@ public class DeliveryRepository : IDeliveryRepository
         await _context.CourierDocuments.AddAsync(document);
     }
 
-    public Task<List<CourierVehicle>> GetVehiclesByCourierAsync(Guid courierId)
+    public async Task<List<CourierVehicle>> GetVehiclesByCourierAsync(Guid courierOrUserId)
     {
-        return _context.CourierVehicles
-            .Where(v => v.CourierId == courierId)
+        var ids = await ResolveCourierIdsAsync(courierOrUserId);
+        return await _context.CourierVehicles
+            .Where(v => ids.Contains(v.CourierId))
             .OrderByDescending(v => v.CreatedAt)
             .ToListAsync();
     }
@@ -73,10 +76,11 @@ public class DeliveryRepository : IDeliveryRepository
             .ToListAsync();
     }
 
-    public Task<List<Delivery>> GetDeliveriesByCourierAsync(Guid courierId)
+    public async Task<List<Delivery>> GetDeliveriesByCourierAsync(Guid courierOrUserId)
     {
-        return _context.Deliveries
-            .Where(d => d.CourierId == courierId)
+        var ids = await ResolveCourierIdsAsync(courierOrUserId);
+        return await _context.Deliveries
+            .Where(d => d.CourierId.HasValue && ids.Contains(d.CourierId.Value))
             .OrderByDescending(d => d.UpdatedAt)
             .ToListAsync();
     }
@@ -91,9 +95,40 @@ public class DeliveryRepository : IDeliveryRepository
         await _context.Deliveries.AddAsync(delivery);
     }
 
+    public async Task AddDriverLocationAsync(DriverLocation location)
+    {
+        await _context.DriverLocations.AddAsync(location);
+    }
+
+    public async Task<List<DriverLocation>> GetDriverLocationsAsync(Guid courierOrUserId, int limit = 20)
+    {
+        var ids = await ResolveCourierIdsAsync(courierOrUserId);
+        return await _context.DriverLocations
+            .AsNoTracking()
+            .Where(l => ids.Contains(l.CourierId))
+            .OrderByDescending(l => l.RecordedAt)
+            .Take(limit)
+            .ToListAsync();
+    }
+
     public Task SaveChangesAsync()
     {
         return _context.SaveChangesAsync();
     }
-}
 
+    private async Task<List<Guid>> ResolveCourierIdsAsync(Guid courierOrUserId)
+    {
+        var list = new List<Guid> { courierOrUserId };
+        var courier = await _context.Couriers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == courierOrUserId || c.UserId == courierOrUserId);
+
+        if (courier != null)
+        {
+            if (!list.Contains(courier.Id)) list.Add(courier.Id);
+            if (courier.UserId.HasValue && !list.Contains(courier.UserId.Value)) list.Add(courier.UserId.Value);
+        }
+
+        return list;
+    }
+}

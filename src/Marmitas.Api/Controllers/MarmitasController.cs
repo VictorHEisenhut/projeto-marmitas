@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Marmitas.Application.Restaurants.Queries;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -7,7 +8,6 @@ namespace Marmitas.Api.Controllers;
 [ApiController]
 public class MarmitasController : ControllerBase
 {
-    private static readonly List<ProductOptionDto> Options = new();
     private readonly IRestaurantQueryService _restaurantQueryService;
 
     public MarmitasController(IRestaurantQueryService restaurantQueryService)
@@ -17,9 +17,14 @@ public class MarmitasController : ControllerBase
 
     [HttpGet("api/marmitas")]
     [AllowAnonymous]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll([FromQuery] int? page = null, [FromQuery] int? pageSize = null)
     {
         var products = await _restaurantQueryService.GetAllProductsAsync();
+        Response.Headers["X-Total-Count"] = products.Count.ToString();
+        if (page.HasValue && pageSize.HasValue && page.Value > 0 && pageSize.Value > 0)
+        {
+            products = products.Skip((page.Value - 1) * pageSize.Value).Take(pageSize.Value).ToList();
+        }
         return Ok(products);
     }
 
@@ -35,6 +40,9 @@ public class MarmitasController : ControllerBase
     [Authorize(Roles = "admin,super_admin,restaurant_owner,restaurant_staff")]
     public async Task<IActionResult> AddToMenu(Guid id, [FromBody] CreateProductRequest request)
     {
+        if (!await CanManageRestaurantAsync(id))
+            return Forbid();
+
         var result = await _restaurantQueryService.CreateProductAsync(id, request);
         return StatusCode(201, result);
     }
@@ -43,6 +51,10 @@ public class MarmitasController : ControllerBase
     [Authorize(Roles = "admin,super_admin,restaurant_owner,restaurant_staff")]
     public async Task<IActionResult> Update(Guid id, [FromBody] CreateProductRequest request)
     {
+        var product = await _restaurantQueryService.GetProductByIdAsync(id);
+        if (!await CanManageRestaurantAsync(product.RestaurantId))
+            return Forbid();
+
         var result = await _restaurantQueryService.UpdateProductAsync(id, request);
         return Ok(result);
     }
@@ -51,6 +63,10 @@ public class MarmitasController : ControllerBase
     [Authorize(Roles = "admin,super_admin,restaurant_owner,restaurant_staff")]
     public async Task<IActionResult> ChangeAvailability(Guid id, [FromBody] UpdateProductAvailabilityRequest request)
     {
+        var product = await _restaurantQueryService.GetProductByIdAsync(id);
+        if (!await CanManageRestaurantAsync(product.RestaurantId))
+            return Forbid();
+
         var result = await _restaurantQueryService.ChangeProductAvailabilityAsync(id, request.IsActive);
         return Ok(result);
     }
@@ -59,6 +75,10 @@ public class MarmitasController : ControllerBase
     [Authorize(Roles = "admin,super_admin,restaurant_owner,restaurant_staff")]
     public async Task<IActionResult> Delete(Guid id)
     {
+        var product = await _restaurantQueryService.GetProductByIdAsync(id);
+        if (!await CanManageRestaurantAsync(product.RestaurantId))
+            return Forbid();
+
         await _restaurantQueryService.DeleteProductAsync(id);
         return NoContent();
     }
@@ -67,8 +87,7 @@ public class MarmitasController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> GetOptions(Guid id)
     {
-        await _restaurantQueryService.GetProductByIdAsync(id);
-        var list = Options.Where(o => o.ProductId == id).ToList();
+        var list = await _restaurantQueryService.GetProductOptionsAsync(id);
         return Ok(list);
     }
 
@@ -76,46 +95,39 @@ public class MarmitasController : ControllerBase
     [Authorize(Roles = "admin,super_admin,restaurant_owner,restaurant_staff")]
     public async Task<IActionResult> AddOption(Guid id, [FromBody] SaveProductOptionRequest request)
     {
-        await _restaurantQueryService.GetProductByIdAsync(id);
-        if (string.IsNullOrWhiteSpace(request.Name))
-            throw new Exception("O nome da opção é obrigatório.");
+        var product = await _restaurantQueryService.GetProductByIdAsync(id);
+        if (!await CanManageRestaurantAsync(product.RestaurantId))
+            return Forbid();
 
-        var option = new ProductOptionDto
-        {
-            Id = Guid.NewGuid(),
-            ProductId = id,
-            Name = request.Name.Trim(),
-            AdditionalPrice = request.AdditionalPrice
-        };
-
-        Options.Add(option);
+        var option = await _restaurantQueryService.AddProductOptionAsync(id, request);
         return StatusCode(201, option);
     }
 
     [HttpPut("api/marmitas/opcoes/{id}")]
     [Authorize(Roles = "admin,super_admin,restaurant_owner,restaurant_staff")]
-    public IActionResult UpdateOption(Guid id, [FromBody] SaveProductOptionRequest request)
+    public async Task<IActionResult> UpdateOption(Guid id, [FromBody] SaveProductOptionRequest request)
     {
-        var option = Options.FirstOrDefault(o => o.Id == id);
-        if (option == null)
-            throw new Exception("Opção não encontrada.");
-
-        if (!string.IsNullOrWhiteSpace(request.Name))
-            option.Name = request.Name.Trim();
-        option.AdditionalPrice = request.AdditionalPrice;
-
+        var option = await _restaurantQueryService.UpdateProductOptionAsync(id, request);
         return Ok(option);
     }
 
     [HttpDelete("api/marmitas/opcoes/{id}")]
     [Authorize(Roles = "admin,super_admin,restaurant_owner,restaurant_staff")]
-    public IActionResult DeleteOption(Guid id)
+    public async Task<IActionResult> DeleteOption(Guid id)
     {
-        var option = Options.FirstOrDefault(o => o.Id == id);
-        if (option == null)
-            throw new Exception("Opção não encontrada.");
-
-        Options.Remove(option);
+        await _restaurantQueryService.DeleteProductOptionAsync(id);
         return NoContent();
+    }
+
+    private async Task<bool> CanManageRestaurantAsync(Guid restaurantId)
+    {
+        if (User.IsInRole("admin") || User.IsInRole("super_admin"))
+            return true;
+
+        var subClaim = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (!Guid.TryParse(subClaim, out var userId))
+            return false;
+
+        return await _restaurantQueryService.IsUserAuthorizedAsync(restaurantId, userId, false);
     }
 }

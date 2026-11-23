@@ -1,5 +1,6 @@
 using Marmitas.Application.Common.Interfaces;
 using Marmitas.Application.Users.Dtos;
+using Marmitas.Domain.Entities;
 using Marmitas.Domain.Enums;
 
 namespace Marmitas.Application.Users;
@@ -28,23 +29,50 @@ public class LoginService : ILoginService
             throw new Exception("E-mail ou senha inválidos.");
 
         var user = await _users.GetByEmailAsync(request.Email.Trim().ToLower());
-
-        if (user == null || !_passwordHasher.Verify(request.Password, user.PasswordHash))
+        if (user == null)
             throw new Exception("E-mail ou senha inválidos.");
 
-        if (user.Status == UserStatus.Blocked)
+        if (user.IsLockedOut())
+            throw new Exception("Conta temporariamente bloqueada por excesso de tentativas. Tente novamente em alguns minutos.");
+
+        if (!_passwordHasher.Verify(request.Password, user.PasswordHash))
         {
-            throw new Exception("Usuário bloqueado. Entre em contato com o suporte.");
+            user.RegisterFailedLogin();
+            await _users.SaveChangesAsync();
+            throw new Exception("E-mail ou senha inválidos.");
         }
 
+        if (user.Status == UserStatus.Blocked)
+            throw new Exception("Usuário bloqueado. Entre em contato com o suporte.");
+
+        if (user.MfaEnabled && !string.IsNullOrWhiteSpace(user.MfaSecret))
+        {
+            if (string.IsNullOrWhiteSpace(request.MfaCode) || request.MfaCode.Trim() != user.MfaSecret)
+                throw new Exception("Código de autenticação em duas etapas (MFA) inválido ou ausente.");
+        }
+
+        user.ResetFailedLogins();
+
         var (token, expiresAt) = _tokenService.GenerateToken(user);
+        var refreshTokenValue = Convert.ToBase64String(Guid.NewGuid().ToByteArray())
+            .Replace("+", "")
+            .Replace("/", "")
+            .Replace("=", "");
+
+        await _users.AddRefreshTokenAsync(new RefreshToken
+        {
+            UserId = user.Id,
+            Token = refreshTokenValue,
+            ExpiresAt = DateTime.UtcNow.AddDays(7)
+        });
+        await _users.SaveChangesAsync();
 
         return new LoginResponse
         {
             AccessToken = token,
+            RefreshToken = refreshTokenValue,
             ExpiresAt = expiresAt,
             User = UserMapper.ToResponse(user)
         };
     }
 }
-

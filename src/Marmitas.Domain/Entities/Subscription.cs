@@ -1,3 +1,5 @@
+using Marmitas.Domain.Exceptions;
+
 namespace Marmitas.Domain.Entities;
 
 public class Subscription : Entity
@@ -9,5 +11,71 @@ public class Subscription : Entity
     public string Status { get; set; } = "Active";
     public DateTime StartDate { get; set; }
     public DateTime NextBillingDate { get; set; }
-}
 
+    public int TotalMealsInCycle { get; set; } = 20;
+    public int UsedMealsInCycle { get; set; }
+    public Guid? PreferredRestaurantId { get; set; }
+    public Guid? DefaultAddressId { get; set; }
+    public int FailedPaymentAttempts { get; set; }
+    public DateTime? GracePeriodEndsAt { get; set; }
+    public DateTime? CancelledAt { get; set; }
+
+    public int GetRemainingMeals() => Math.Max(0, TotalMealsInCycle - UsedMealsInCycle);
+
+    public void Pause()
+    {
+        if (Status == "Cancelled" || Status == "Expired")
+            throw DomainException.Conflict("Não é possível pausar uma assinatura cancelada ou expirada.");
+
+        Status = "Paused";
+    }
+
+    public void Reactivate()
+    {
+        if (Status == "Cancelled")
+            throw DomainException.Conflict("Assinatura cancelada não pode ser reativada diretamente.");
+
+        Status = "Active";
+        GracePeriodEndsAt = null;
+        FailedPaymentAttempts = 0;
+    }
+
+    public void Renew(int mealsInCycle)
+    {
+        Status = "Active";
+        StartDate = DateTime.UtcNow;
+        NextBillingDate = DateTime.UtcNow.AddMonths(1);
+        TotalMealsInCycle = mealsInCycle > 0 ? mealsInCycle : TotalMealsInCycle;
+        UsedMealsInCycle = 0;
+        FailedPaymentAttempts = 0;
+        GracePeriodEndsAt = null;
+    }
+
+    public void Cancel()
+    {
+        Status = "Cancelled";
+        CancelledAt = DateTime.UtcNow;
+    }
+
+    public void RegisterPaymentFailure()
+    {
+        FailedPaymentAttempts++;
+        Status = FailedPaymentAttempts >= 3 ? "Suspended" : "GracePeriod";
+        GracePeriodEndsAt ??= DateTime.UtcNow.AddDays(5);
+    }
+
+    public decimal ChangePlan(Plan newPlan)
+    {
+        var remainingDays = Math.Max(0, (NextBillingDate - DateTime.UtcNow).TotalDays);
+        var cycleRatio = (decimal)Math.Min(1.0, remainingDays / 30.0);
+        var currentCredit = Math.Round(MonthlyPrice * cycleRatio, 2);
+        var newProRataCharge = Math.Round(newPlan.MonthlyPrice * cycleRatio, 2);
+        var difference = Math.Round(newProRataCharge - currentCredit, 2);
+
+        PlanId = newPlan.Id;
+        PlanName = newPlan.Name;
+        MonthlyPrice = newPlan.MonthlyPrice;
+        TotalMealsInCycle = newPlan.MealsPerMonth > 0 ? newPlan.MealsPerMonth : newPlan.MealsPerWeek * 4;
+        return difference;
+    }
+}

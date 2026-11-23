@@ -14,5 +14,16 @@ public interface IUserRepository
     Task AddRoleAsync(Role role);
     Task<List<Permission>> GetAllPermissionsAsync();
     Task AddAsync(User user);
+
+    Task AddRefreshTokenAsync(RefreshToken refreshToken);
+    Task<RefreshToken?> GetRefreshTokenAsync(string token);
+    Task RevokeUserRefreshTokensAsync(Guid userId);
+
+    Task AddPasswordResetTokenAsync(PasswordResetToken token);
+    Task<PasswordResetToken?> GetLatestPasswordResetTokenAsync(string email);
+
+    Task AddUserConsentAsync(UserConsent consent);
+    Task<List<UserConsent>> GetUserConsentsAsync(Guid userId);
+
     Task SaveChangesAsync();
 }

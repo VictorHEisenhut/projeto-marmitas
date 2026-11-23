@@ -31,6 +31,8 @@ public class ProductDto
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public decimal Price { get; set; }
+    public decimal? PromotionalPrice { get; set; }
+    public int? DailyStock { get; set; }
     public bool IsActive { get; set; }
     public string? ImageUrl { get; set; }
     public bool AvailableInPlans { get; set; } = true;
@@ -46,6 +48,8 @@ public class CreateProductRequest
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public decimal Price { get; set; }
+    public decimal? PromotionalPrice { get; set; }
+    public int? DailyStock { get; set; }
     public string? ImageUrl { get; set; }
     public bool AvailableInPlans { get; set; } = true;
     public bool AllowsCutlery { get; set; }
@@ -65,10 +69,12 @@ public class ProductOptionDto
     public Guid ProductId { get; set; }
     public string Name { get; set; } = string.Empty;
     public decimal AdditionalPrice { get; set; }
+    public int MaxQuantity { get; set; } = 1;
 }
 
 public class SaveProductOptionRequest
 {
     public string Name { get; set; } = string.Empty;
     public decimal AdditionalPrice { get; set; }
+    public int MaxQuantity { get; set; } = 1;
 }

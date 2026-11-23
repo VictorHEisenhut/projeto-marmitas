@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Marmitas.Application.Common.Interfaces;
+using Marmitas.Application.Platform.Dtos;
 using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -51,6 +52,8 @@ public class AddressesController : ControllerBase
             City = request.City.Trim(),
             State = request.State.Trim(),
             ZipCode = request.ZipCode.Trim(),
+            Latitude = request.Latitude,
+            Longitude = request.Longitude,
             IsMain = request.IsMain || existing.Count == 0
         };
 
@@ -75,6 +78,8 @@ public class AddressesController : ControllerBase
         address.City = request.City.Trim();
         address.State = request.State.Trim();
         address.ZipCode = request.ZipCode.Trim();
+        if (request.Latitude.HasValue) address.Latitude = request.Latitude;
+        if (request.Longitude.HasValue) address.Longitude = request.Longitude;
 
         await _profiles.SaveChangesAsync();
         return Ok(address);
@@ -114,16 +119,4 @@ public class AddressesController : ControllerBase
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         return Guid.TryParse(sub, out var id) ? id : Guid.Empty;
     }
-}
-
-public class SaveAddressRequest
-{
-    public string Street { get; set; } = string.Empty;
-    public string Number { get; set; } = string.Empty;
-    public string? Complement { get; set; }
-    public string Neighborhood { get; set; } = string.Empty;
-    public string City { get; set; } = string.Empty;
-    public string State { get; set; } = string.Empty;
-    public string ZipCode { get; set; } = string.Empty;
-    public bool IsMain { get; set; }
 }

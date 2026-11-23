@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Marmitas.Application.Common.Interfaces;
+using Marmitas.Application.Platform.Dtos;
 using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -59,10 +60,4 @@ public class FavoritesController : ControllerBase
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         return Guid.TryParse(sub, out var id) ? id : Guid.Empty;
     }
-}
-
-public class AddFavoriteRequest
-{
-    public Guid? RestaurantId { get; set; }
-    public Guid? ProductId { get; set; }
 }

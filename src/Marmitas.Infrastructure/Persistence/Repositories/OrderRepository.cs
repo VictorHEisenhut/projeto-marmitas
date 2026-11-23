@@ -39,6 +39,18 @@ public class OrderRepository : IOrderRepository
             .ToListAsync();
     }
 
+    public async Task<List<Order>> GetByRestaurantIdAsync(Guid restaurantId)
+    {
+        return await _context.Orders
+            .AsNoTracking()
+            .Include(o => o.Items)
+            .Include(o => o.Restaurant)
+            .Include(o => o.Customer)
+            .Where(o => o.RestaurantId == restaurantId)
+            .OrderByDescending(o => o.CreatedAt)
+            .ToListAsync();
+    }
+
     public async Task<List<Order>> GetAllAsync()
     {
         return await _context.Orders
@@ -48,6 +60,20 @@ public class OrderRepository : IOrderRepository
             .Include(o => o.Customer)
             .OrderByDescending(o => o.CreatedAt)
             .ToListAsync();
+    }
+
+    public Task<List<OrderStatusHistory>> GetStatusHistoryAsync(Guid orderId)
+    {
+        return _context.OrderStatusHistories
+            .AsNoTracking()
+            .Where(h => h.OrderId == orderId)
+            .OrderBy(h => h.CreatedAt)
+            .ToListAsync();
+    }
+
+    public async Task AddStatusHistoryAsync(OrderStatusHistory history)
+    {
+        await _context.OrderStatusHistories.AddAsync(history);
     }
 
     public async Task<int> SaveChangesAsync()

@@ -7,6 +7,7 @@ const STORAGE_KEY = 'marmitas_auth'
 
 interface StoredSession {
   accessToken: string
+  refreshToken?: string
   expiresAt: string
   user: User
 }
@@ -34,6 +35,7 @@ function parseJwtRoles(token: string): string[] {
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   const accessToken = ref<string | null>(null)
+  const refreshTokenValue = ref<string | null>(null)
   const expiresAt = ref<string | null>(null)
   const initialized = ref(false)
 
@@ -87,11 +89,15 @@ export const useAuthStore = defineStore('auth', () => {
 
   function setSession(data: LoginResponse) {
     accessToken.value = data.accessToken
+    if (data.refreshToken) {
+      refreshTokenValue.value = data.refreshToken
+    }
     expiresAt.value = data.expiresAt
     user.value = data.user
 
     const payload: StoredSession = {
       accessToken: data.accessToken,
+      refreshToken: refreshTokenValue.value || undefined,
       expiresAt: data.expiresAt,
       user: data.user,
     }
@@ -102,14 +108,15 @@ export const useAuthStore = defineStore('auth', () => {
   function clearSession() {
     clearRefreshTimer()
     accessToken.value = null
+    refreshTokenValue.value = null
     expiresAt.value = null
     user.value = null
     localStorage.removeItem(STORAGE_KEY)
   }
 
   async function refreshToken(): Promise<boolean> {
-    if (!accessToken.value || !expiresAt.value) return false
-    if (new Date(expiresAt.value).getTime() <= Date.now()) {
+    if (!accessToken.value && !refreshTokenValue.value) return false
+    if (expiresAt.value && new Date(expiresAt.value).getTime() <= Date.now() && !refreshTokenValue.value) {
       clearSession()
       return false
     }
@@ -120,6 +127,7 @@ export const useAuthStore = defineStore('auth', () => {
       try {
         const { data } = await api.post<LoginResponse>('/auth/refresh-token', {
           email: user.value?.email,
+          refreshToken: refreshTokenValue.value || undefined,
         })
         setSession(data)
         return true
@@ -172,6 +180,7 @@ export const useAuthStore = defineStore('auth', () => {
       }
 
       accessToken.value = stored.accessToken
+      refreshTokenValue.value = stored.refreshToken || null
       expiresAt.value = stored.expiresAt
       user.value = stored.user
       scheduleRefresh()

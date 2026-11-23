@@ -1,11 +1,21 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { AlertCircle, Bike, Loader2, MessageSquareReply, Plus, RefreshCw, Sparkles, Store, Trash2 } from 'lucide-vue-next'
 import Navbar from '@/components/Navbar.vue'
-import { api, formatCurrency, getErrorMessage } from '@/services/api'
+import { api, formatCurrency, getErrorMessage, uploadFile } from '@/services/api'
 import { generateMarmitaWithAi } from '@/services/ai'
+import { OrderTrackingClient } from '@/services/realtime'
 import { useAuthStore } from '@/stores/auth'
-import type { Category, NutritionalEstimate, Order, Product, Restaurant, RestaurantFinancials } from '@/types'
+import type {
+  Category,
+  DeliveryZone,
+  NutritionalEstimate,
+  Order,
+  Product,
+  Restaurant,
+  RestaurantFinancials,
+  RestaurantTeamMember,
+} from '@/types'
 
 const auth = useAuthStore()
 
@@ -49,6 +59,22 @@ const editRestComplement = ref('')
 const editRestNeighborhood = ref('')
 const editRestCity = ref('')
 const editRestState = ref('SP')
+const editRestOpeningHours = ref('Seg a Sáb das 10:30 às 15:30')
+const editRestDeliveryFee = ref<number>(0)
+const editRestDeliveryRadiusKm = ref<number>(8)
+const editRestPixKey = ref('')
+const editRestImageUrl = ref('')
+const uploadingRestaurantImage = ref(false)
+
+const deliveryZones = ref<DeliveryZone[]>([])
+const newZoneNeighborhood = ref('')
+const newZoneFee = ref<number>(5.9)
+const newZoneMinutes = ref<number>(30)
+const savingZone = ref(false)
+
+const teamMembers = ref<RestaurantTeamMember[]>([])
+const newStaffEmail = ref('')
+const savingStaff = ref(false)
 
 function syncSelectedRestaurantForm(restaurantId: string) {
   const current = restaurants.value.find((r) => r.id === restaurantId)
@@ -63,6 +89,11 @@ function syncSelectedRestaurantForm(restaurantId: string) {
   editRestNeighborhood.value = current.addressNeighborhood || ''
   editRestCity.value = current.addressCity || ''
   editRestState.value = current.addressState || 'SP'
+  editRestOpeningHours.value = current.openingHours || 'Seg a Sáb das 10:30 às 15:30'
+  editRestDeliveryFee.value = current.deliveryFee ?? 0
+  editRestDeliveryRadiusKm.value = current.deliveryRadiusKm ?? 8
+  editRestPixKey.value = current.pixKey || ''
+  editRestImageUrl.value = current.imageUrl || ''
 
   // Se faltar CNPJ ou endereço, abre o formulário automaticamente para preenchimento obrigatório
   if (
@@ -78,10 +109,13 @@ function syncSelectedRestaurantForm(restaurantId: string) {
   }
 }
 
+const editingProductId = ref<string | null>(null)
 const productName = ref('')
 const productDescription = ref('')
 const productPrice = ref<number | null>(null)
 const productCategoryId = ref('')
+const productImageUrl = ref('')
+const uploadingProductImage = ref(false)
 const availableInPlans = ref(true)
 const allowsCutlery = ref(false)
 const cutleryHasExtraCost = ref(false)
@@ -164,21 +198,25 @@ async function loadRestaurantDetails(restaurantId: string) {
   errorMessage.value = ''
 
   try {
-    const [prodRes, catRes, finRes, ordRes] = await Promise.allSettled([
-      api.get<Product[]>(`/restaurantes/${restaurantId}/cardapio`),
+    const [prodRes, catRes, finRes, ordRes, zoneRes, teamRes] = await Promise.allSettled([
+      api.get<Product[]>(`/restaurantes/${restaurantId}/cardapio`, { params: { includeInactive: true } }),
       api.get<Category[]>('/categorias'),
       api.get<RestaurantFinancials>(`/restaurantes/${restaurantId}/financeiro`),
       api.get<Order[]>('/pedidos', { params: { restaurantId } }),
+      api.get<DeliveryZone[]>(`/restaurantes/${restaurantId}/zonas-entrega`),
+      api.get<RestaurantTeamMember[]>(`/restaurantes/${restaurantId}/equipe`),
     ])
 
     if (prodRes.status === 'fulfilled') products.value = prodRes.value.data
     if (catRes.status === 'fulfilled') {
       categories.value = catRes.value.data
       const firstCat = catRes.value.data[0]
-      if (firstCat) productCategoryId.value = firstCat.id
+      if (firstCat && !productCategoryId.value) productCategoryId.value = firstCat.id
     }
     if (finRes.status === 'fulfilled') financials.value = finRes.value.data
     if (ordRes.status === 'fulfilled') restaurantOrders.value = ordRes.value.data
+    if (zoneRes.status === 'fulfilled') deliveryZones.value = zoneRes.value.data
+    if (teamRes.status === 'fulfilled') teamMembers.value = teamRes.value.data
   } catch (error) {
     errorMessage.value = getErrorMessage(error, 'Erro ao carregar detalhes do restaurante.')
   } finally {
@@ -186,8 +224,23 @@ async function loadRestaurantDetails(restaurantId: string) {
   }
 }
 
+const realtimeClient = new OrderTrackingClient({
+  onOrderStatusUpdated(payload) {
+    if (payload.restaurantId && payload.restaurantId === selectedRestaurantId.value) {
+      const target = restaurantOrders.value.find((o) => o.id === payload.orderId)
+      if (target) {
+        target.status = payload.status
+        target.updatedAt = payload.updatedAt
+      } else {
+        void loadRestaurantDetails(selectedRestaurantId.value)
+      }
+    }
+  },
+})
+
 watch(selectedRestaurantId, (newId) => {
   if (newId) {
+    realtimeClient.joinRestaurantGroup(newId)
     syncSelectedRestaurantForm(newId)
     void loadRestaurantDetails(newId)
   }
@@ -294,6 +347,11 @@ async function handleUpdateRestaurantInfo() {
       addressNeighborhood: editRestNeighborhood.value.trim(),
       addressCity: editRestCity.value.trim(),
       addressState: editRestState.value.trim().toUpperCase(),
+      openingHours: editRestOpeningHours.value.trim() || 'Seg a Sáb das 10:30 às 15:30',
+      deliveryFee: Number(editRestDeliveryFee.value) || 0,
+      deliveryRadiusKm: Number(editRestDeliveryRadiusKm.value) || 8,
+      pixKey: editRestPixKey.value.trim() || null,
+      imageUrl: editRestImageUrl.value.trim() || null,
     })
     editingRestaurantInfo.value = false
     successMessage.value = 'Dados cadastrais do restaurante (CNPJ e Endereço) atualizados com sucesso!'
@@ -345,6 +403,142 @@ async function handleGenerateWithAi() {
   }
 }
 
+function startEditProduct(product: Product) {
+  editingProductId.value = product.id
+  productName.value = product.name
+  productDescription.value = product.description || ''
+  productPrice.value = product.price
+  productImageUrl.value = product.imageUrl || ''
+  if (product.categoryId) productCategoryId.value = product.categoryId
+  availableInPlans.value = product.availableInPlans ?? true
+  allowsCutlery.value = product.allowsCutlery ?? false
+  cutleryHasExtraCost.value = product.cutleryHasExtraCost ?? false
+  cutleryPrice.value = product.cutleryPrice ?? null
+  productAddons.value = (product.addons || []).map((a) => ({
+    name: a.name,
+    extraPrice: a.extraPrice,
+    maxQuantity: a.maxQuantity,
+  }))
+}
+
+function cancelEditProduct() {
+  editingProductId.value = null
+  productName.value = ''
+  productDescription.value = ''
+  productPrice.value = null
+  productImageUrl.value = ''
+  availableInPlans.value = true
+  allowsCutlery.value = false
+  cutleryHasExtraCost.value = false
+  cutleryPrice.value = null
+  productAddons.value = []
+  aiGenNutrition.value = null
+  aiGenMessage.value = ''
+}
+
+async function handleUploadRestaurantImage(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  errorMessage.value = ''
+  uploadingRestaurantImage.value = true
+  try {
+    const res = await uploadFile(file)
+    editRestImageUrl.value = res.url
+    successMessage.value = 'Logo/imagem do restaurante enviada com sucesso.'
+  } catch (err) {
+    errorMessage.value = getErrorMessage(err, 'Não foi possível enviar a imagem do restaurante.')
+  } finally {
+    uploadingRestaurantImage.value = false
+  }
+}
+
+async function handleUploadProductImage(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  errorMessage.value = ''
+  uploadingProductImage.value = true
+  try {
+    const res = await uploadFile(file)
+    productImageUrl.value = res.url
+    successMessage.value = 'Foto da marmita enviada com sucesso.'
+  } catch (err) {
+    errorMessage.value = getErrorMessage(err, 'Não foi possível enviar a foto da marmita.')
+  } finally {
+    uploadingProductImage.value = false
+  }
+}
+
+async function handleAddDeliveryZone() {
+  if (!selectedRestaurantId.value || !newZoneNeighborhood.value.trim()) return
+  errorMessage.value = ''
+  savingZone.value = true
+  try {
+    const { data } = await api.post<DeliveryZone>(
+      `/restaurantes/${selectedRestaurantId.value}/zonas-entrega`,
+      {
+        neighborhood: newZoneNeighborhood.value.trim(),
+        city: editRestCity.value || 'São Paulo',
+        radiusKm: editRestDeliveryRadiusKm.value || 8,
+        deliveryFee: Number(newZoneFee.value) || 0,
+        estimatedMinutes: Number(newZoneMinutes.value) || 30,
+      },
+    )
+    deliveryZones.value.push(data)
+    newZoneNeighborhood.value = ''
+    successMessage.value = 'Zona de entrega adicionada.'
+  } catch (error) {
+    errorMessage.value = getErrorMessage(error, 'Não foi possível adicionar a zona de entrega.')
+  } finally {
+    savingZone.value = false
+  }
+}
+
+async function handleDeleteDeliveryZone(zoneId: string) {
+  if (!selectedRestaurantId.value) return
+  errorMessage.value = ''
+  try {
+    await api.delete(`/restaurantes/${selectedRestaurantId.value}/zonas-entrega/${zoneId}`)
+    deliveryZones.value = deliveryZones.value.filter((z) => z.id !== zoneId)
+  } catch (error) {
+    errorMessage.value = getErrorMessage(error, 'Não foi possível remover a zona de entrega.')
+  }
+}
+
+async function handleAddTeamMember() {
+  if (!selectedRestaurantId.value || !newStaffEmail.value.trim()) return
+  errorMessage.value = ''
+  savingStaff.value = true
+  try {
+    const { data } = await api.post<RestaurantTeamMember>(
+      `/restaurantes/${selectedRestaurantId.value}/equipe`,
+      {
+        email: newStaffEmail.value.trim(),
+        role: 'restaurant_staff',
+      },
+    )
+    teamMembers.value.push(data)
+    newStaffEmail.value = ''
+    successMessage.value = 'Colaborador vinculado à equipe do restaurante.'
+  } catch (error) {
+    errorMessage.value = getErrorMessage(error, 'Não foi possível vincular o colaborador.')
+  } finally {
+    savingStaff.value = false
+  }
+}
+
+async function handleRemoveTeamMember(memberId: string) {
+  if (!selectedRestaurantId.value) return
+  errorMessage.value = ''
+  try {
+    await api.delete(`/restaurantes/${selectedRestaurantId.value}/equipe/${memberId}`)
+    teamMembers.value = teamMembers.value.filter((m) => m.id !== memberId)
+  } catch (error) {
+    errorMessage.value = getErrorMessage(error, 'Não foi possível remover o colaborador.')
+  }
+}
+
 async function handleCreateProduct() {
   errorMessage.value = ''
   successMessage.value = ''
@@ -388,11 +582,12 @@ async function handleCreateProduct() {
 
   savingProduct.value = true
   try {
-    await api.post(`/restaurantes/${selectedRestaurantId.value}/marmitas`, {
+    const payload = {
       categoryId: productCategoryId.value,
       name: productName.value.trim(),
       description: productDescription.value.trim(),
       price: productPrice.value,
+      imageUrl: productImageUrl.value.trim() || null,
       availableInPlans: availableInPlans.value,
       allowsCutlery: allowsCutlery.value,
       cutleryHasExtraCost: allowsCutlery.value && cutleryHasExtraCost.value,
@@ -402,22 +597,20 @@ async function handleCreateProduct() {
         extraPrice: Number(a.extraPrice) || 0,
         maxQuantity: Number(a.maxQuantity) || 1,
       })),
-    })
+    }
 
-    productName.value = ''
-    productDescription.value = ''
-    productPrice.value = null
-    availableInPlans.value = true
-    allowsCutlery.value = false
-    cutleryHasExtraCost.value = false
-    cutleryPrice.value = null
-    productAddons.value = []
-    aiGenNutrition.value = null
-    aiGenMessage.value = ''
-    successMessage.value = 'Marmita adicionada ao cardápio.'
+    if (editingProductId.value) {
+      await api.put(`/marmitas/${editingProductId.value}`, payload)
+      successMessage.value = 'Marmita atualizada no cardápio.'
+    } else {
+      await api.post(`/restaurantes/${selectedRestaurantId.value}/marmitas`, payload)
+      successMessage.value = 'Marmita adicionada ao cardápio.'
+    }
+
+    cancelEditProduct()
     await loadRestaurantDetails(selectedRestaurantId.value)
   } catch (error) {
-    errorMessage.value = getErrorMessage(error, 'Não foi possível cadastrar a marmita.')
+    errorMessage.value = getErrorMessage(error, 'Não foi possível salvar a marmita.')
   } finally {
     savingProduct.value = false
   }
@@ -522,19 +715,28 @@ async function handleReplyComplaint(orderId: string) {
 function formatOrderStatus(status: string): string {
   const map: Record<string, string> = {
     Created: 'Criado',
+    PaymentPending: 'Aguardando pagamento',
     Paid: 'Pago',
+    Confirmed: 'Confirmado',
     Preparing: 'Em preparo',
     ReadyForPickup: 'Pronto (Aguardando Entregador)',
     DriverAssigned: 'Entregador a caminho',
+    PickedUp: 'Coletado pelo entregador',
     InTransit: 'Em rota de entrega',
     Delivered: 'Entregue',
     Cancelled: 'Cancelado',
+    Refunded: 'Estornado',
   }
   return map[status] || status
 }
 
 onMounted(() => {
+  void realtimeClient.connect()
   void loadRestaurants()
+})
+
+onUnmounted(() => {
+  realtimeClient.disconnect()
 })
 </script>
 
@@ -882,16 +1084,172 @@ onMounted(() => {
               />
             </div>
 
+            <div class="sm:col-span-2">
+              <label class="block text-xs font-medium text-stone-700">Horário de funcionamento</label>
+              <input
+                v-model="editRestOpeningHours"
+                type="text"
+                placeholder="Seg a Sáb das 10:30 às 15:30"
+                class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none"
+              />
+            </div>
+
+            <div class="sm:col-span-1">
+              <label class="block text-xs font-medium text-stone-700">Taxa base (R$)</label>
+              <input
+                v-model.number="editRestDeliveryFee"
+                type="number"
+                step="0.1"
+                min="0"
+                class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none"
+              />
+            </div>
+
+            <div class="sm:col-span-1">
+              <label class="block text-xs font-medium text-stone-700">Raio máx. (km)</label>
+              <input
+                v-model.number="editRestDeliveryRadiusKm"
+                type="number"
+                step="0.5"
+                min="1"
+                class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none"
+              />
+            </div>
+
+            <div class="sm:col-span-2">
+              <label class="block text-xs font-medium text-stone-700">Chave PIX para repasses</label>
+              <input
+                v-model="editRestPixKey"
+                type="text"
+                placeholder="CNPJ, E-mail ou Chave Aleatória"
+                class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none"
+              />
+            </div>
+
+            <div class="sm:col-span-4">
+              <label class="block text-xs font-medium text-stone-700">
+                Logo / Imagem do Restaurante (Upload ou URL)
+              </label>
+              <div class="mt-1 flex flex-wrap items-center gap-2">
+                <input
+                  v-model="editRestImageUrl"
+                  type="text"
+                  placeholder="https://... ou envie um arquivo ao lado"
+                  class="flex-1 rounded-lg border border-stone-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none"
+                />
+                <label class="cursor-pointer rounded-lg border border-stone-300 bg-stone-50 px-3 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-100">
+                  {{ uploadingRestaurantImage ? 'Enviando...' : 'Enviar arquivo' }}
+                  <input
+                    type="file"
+                    accept=".jpg,.jpeg,.png,.webp"
+                    class="hidden"
+                    @change="handleUploadRestaurantImage"
+                  />
+                </label>
+              </div>
+            </div>
+
             <div class="sm:col-span-6">
               <button
                 type="submit"
                 :disabled="savingRestaurant"
                 class="rounded-lg bg-brand-600 px-4 py-2 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
               >
-                {{ savingRestaurant ? 'Salvando...' : 'Salvar CNPJ e Endereço do Restaurante' }}
+                {{ savingRestaurant ? 'Salvando...' : 'Salvar configurações do restaurante' }}
               </button>
             </div>
           </form>
+
+          <!-- Zonas de Entrega e Equipe do Restaurante -->
+          <div class="mt-5 grid gap-4 border-t border-stone-100 pt-4 sm:grid-cols-2">
+            <div class="rounded-lg border border-stone-200 bg-stone-50 p-3.5 space-y-2.5">
+              <h3 class="text-xs font-bold uppercase text-stone-700">
+                Zonas de Entrega por Bairro
+              </h3>
+              <form class="flex flex-wrap gap-2" @submit.prevent="handleAddDeliveryZone">
+                <input
+                  v-model="newZoneNeighborhood"
+                  type="text"
+                  required
+                  placeholder="Bairro (ex: Pinheiros)"
+                  class="flex-1 rounded border border-stone-300 bg-white px-2.5 py-1.5 text-xs"
+                />
+                <input
+                  v-model.number="newZoneFee"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  placeholder="Taxa R$"
+                  class="w-20 rounded border border-stone-300 bg-white px-2 py-1.5 text-xs"
+                />
+                <button
+                  type="submit"
+                  :disabled="savingZone"
+                  class="rounded bg-stone-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-stone-800"
+                >
+                  Adicionar
+                </button>
+              </form>
+              <ul v-if="deliveryZones.length > 0" class="divide-y divide-stone-200 text-xs">
+                <li
+                  v-for="zone in deliveryZones"
+                  :key="zone.id"
+                  class="flex items-center justify-between py-1.5"
+                >
+                  <span>
+                    <strong>{{ zone.neighborhood }}</strong> · {{ formatCurrency(zone.deliveryFee) }} (~{{ zone.estimatedMinutes }} min)
+                  </span>
+                  <button
+                    type="button"
+                    class="text-red-600 hover:underline"
+                    @click="handleDeleteDeliveryZone(zone.id)"
+                  >
+                    Remover
+                  </button>
+                </li>
+              </ul>
+            </div>
+
+            <div class="rounded-lg border border-stone-200 bg-stone-50 p-3.5 space-y-2.5">
+              <h3 class="text-xs font-bold uppercase text-stone-700">
+                Equipe Interna (restaurant_staff)
+              </h3>
+              <form class="flex gap-2" @submit.prevent="handleAddTeamMember">
+                <input
+                  v-model="newStaffEmail"
+                  type="email"
+                  required
+                  placeholder="E-mail do colaborador cadastrado"
+                  class="flex-1 rounded border border-stone-300 bg-white px-2.5 py-1.5 text-xs"
+                />
+                <button
+                  type="submit"
+                  :disabled="savingStaff"
+                  class="rounded bg-stone-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-stone-800"
+                >
+                  Vincular
+                </button>
+              </form>
+              <ul v-if="teamMembers.length > 0" class="divide-y divide-stone-200 text-xs">
+                <li
+                  v-for="member in teamMembers"
+                  :key="member.id"
+                  class="flex items-center justify-between py-1.5"
+                >
+                  <span>
+                    <strong>{{ member.userName }}</strong> ({{ member.userEmail }})
+                  </span>
+                  <button
+                    type="button"
+                    class="text-red-600 hover:underline"
+                    @click="handleRemoveTeamMember(member.id)"
+                  >
+                    Remover
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </div>
         </section>
 
         <section v-if="financials" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -924,7 +1282,19 @@ onMounted(() => {
 
         <div class="grid gap-6 lg:grid-cols-3">
           <section class="rounded-xl border border-stone-200 bg-white p-6 shadow-sm lg:col-span-1">
-            <h2 class="text-base font-bold text-stone-900">Cadastrar marmita</h2>
+            <div class="flex items-center justify-between">
+              <h2 class="text-base font-bold text-stone-900">
+                {{ editingProductId ? 'Editar marmita' : 'Cadastrar marmita' }}
+              </h2>
+              <button
+                v-if="editingProductId"
+                type="button"
+                class="text-xs font-medium text-stone-500 hover:text-stone-800"
+                @click="cancelEditProduct"
+              >
+                Cancelar edição
+              </button>
+            </div>
 
             <form class="mt-4 space-y-3" @submit.prevent="handleCreateProduct">
               <div>
@@ -1005,6 +1375,29 @@ onMounted(() => {
                   placeholder="24.90"
                   class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none"
                 />
+              </div>
+
+              <div>
+                <label class="block text-xs font-medium text-stone-600">
+                  Foto da Marmita (Upload ou URL)
+                </label>
+                <div class="mt-1 flex items-center gap-2">
+                  <input
+                    v-model="productImageUrl"
+                    type="text"
+                    placeholder="/uploads/... ou URL"
+                    class="flex-1 rounded-lg border border-stone-300 px-3 py-2 text-xs focus:border-brand-600 focus:outline-none"
+                  />
+                  <label class="cursor-pointer rounded-lg border border-stone-300 bg-stone-50 px-3 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-100">
+                    {{ uploadingProductImage ? 'Enviando...' : 'Upload' }}
+                    <input
+                      type="file"
+                      accept=".jpg,.jpeg,.png,.webp"
+                      class="hidden"
+                      @change="handleUploadProductImage"
+                    />
+                  </label>
+                </div>
               </div>
 
               <div class="rounded-lg border border-stone-200 bg-stone-50 p-3 space-y-2">
@@ -1143,7 +1536,13 @@ onMounted(() => {
                 class="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
               >
                 <Plus class="h-4 w-4" />
-                {{ savingProduct ? 'Salvando...' : 'Adicionar ao cardápio' }}
+                {{
+                  savingProduct
+                    ? 'Salvando...'
+                    : editingProductId
+                      ? 'Salvar alterações da marmita'
+                      : 'Adicionar ao cardápio'
+                }}
               </button>
             </form>
 
@@ -1219,6 +1618,13 @@ onMounted(() => {
                 </div>
 
                 <div class="flex items-center gap-2">
+                  <button
+                    type="button"
+                    class="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50"
+                    @click="startEditProduct(product)"
+                  >
+                    Editar
+                  </button>
                   <button
                     type="button"
                     class="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50"
@@ -1443,13 +1849,23 @@ onMounted(() => {
                       type="button"
                       :disabled="updatingOrder"
                       class="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-semibold text-stone-800 hover:bg-stone-50"
+                      @click="handleQuickOrderStatus(order.id, 'Confirmed')"
+                    >
+                      Confirmar pedido
+                    </button>
+
+                    <button
+                      v-if="order.status === 'Created' || order.status === 'Paid' || order.status === 'Confirmed'"
+                      type="button"
+                      :disabled="updatingOrder"
+                      class="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-semibold text-stone-800 hover:bg-stone-50"
                       @click="handleQuickOrderStatus(order.id, 'Preparing')"
                     >
                       Iniciar preparo
                     </button>
 
                     <button
-                      v-if="order.status === 'Created' || order.status === 'Paid' || order.status === 'Preparing'"
+                      v-if="order.status === 'Created' || order.status === 'Paid' || order.status === 'Confirmed' || order.status === 'Preparing'"
                       type="button"
                       :disabled="updatingOrder"
                       class="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-brand-700"

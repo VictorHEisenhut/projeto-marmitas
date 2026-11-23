@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
   AlertTriangle,
   Bike,
@@ -12,7 +12,12 @@ import {
   Store,
 } from 'lucide-vue-next'
 import Navbar from '@/components/Navbar.vue'
-import { api, formatCurrency, getErrorMessage } from '@/services/api'
+import { api, formatCurrency, getErrorMessage, uploadFile } from '@/services/api'
+import { OrderTrackingClient } from '@/services/realtime'
+import { useAuthStore } from '@/stores/auth'
+
+const auth = useAuthStore()
+const isAdminUser = computed(() => auth.hasRole(['admin', 'super_admin']))
 import type {
   Courier,
   CourierBillingAddress,
@@ -36,6 +41,8 @@ const successMessage = ref('')
 // Documentos obrigatórios: CPF e CNH
 const cpfNumber = ref('')
 const cnhNumber = ref('')
+const cnhFileUrl = ref('')
+const uploadingCnh = ref(false)
 const savingDocs = ref(false)
 
 // Veículo obrigatório
@@ -75,14 +82,60 @@ function formatDeliveryStatus(status: string): string {
   const map: Record<string, string> = {
     Pending: 'Aguardando',
     Paid: 'Pago / Pronto',
+    Confirmed: 'Confirmado',
     Preparing: 'Em preparo',
     ReadyForPickup: 'Pronto para coleta',
     DriverAssigned: 'Aceita por entregador',
+    PickedUp: 'Coletada no restaurante',
     InTransit: 'Em rota de entrega',
     Delivered: 'Entregue',
     Cancelled: 'Cancelada',
   }
   return map[status] || status
+}
+
+const deliveryPins = ref<Record<string, string>>({})
+
+const realtimeClient = new OrderTrackingClient({
+  onDeliveryUpdated(payload) {
+    const target = deliveries.value.find((d) => d.id === payload.deliveryId || d.orderId === payload.orderId)
+    if (target) {
+      target.status = payload.status
+    } else if (isRegistrationComplete.value) {
+      void loadCourierData()
+    }
+  },
+})
+
+async function handleUploadCnhFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  errorMessage.value = ''
+  uploadingCnh.value = true
+  try {
+    const res = await uploadFile(file)
+    cnhFileUrl.value = res.url
+    successMessage.value = 'Arquivo da CNH enviado com sucesso.'
+  } catch (error) {
+    errorMessage.value = getErrorMessage(error, 'Não foi possível enviar o arquivo da CNH.')
+  } finally {
+    uploadingCnh.value = false
+  }
+}
+
+async function handleSendCurrentGps() {
+  errorMessage.value = ''
+  successMessage.value = ''
+  try {
+    await api.patch('/entregadores/me/localizacao', {
+      latitude: -23.5614 + (Math.random() - 0.5) * 0.01,
+      longitude: -46.6559 + (Math.random() - 0.5) * 0.01,
+    })
+    successMessage.value = 'Localização GPS atualizada no rastreamento em tempo real.'
+  } catch (error) {
+    errorMessage.value = getErrorMessage(error, 'Não foi possível enviar a localização GPS.')
+  }
 }
 
 async function loadCourierData() {
@@ -183,8 +236,18 @@ async function handleUpdateDeliveryStatus(id: string, status: string) {
   errorMessage.value = ''
   successMessage.value = ''
 
+  const pin = deliveryPins.value[id]?.trim() || undefined
+  if (status === 'Delivered' && !pin && !isAdminUser.value) {
+    errorMessage.value =
+      'Informe o código PIN de 4 dígitos do cliente para confirmar a entrega.'
+    return
+  }
+
   try {
-    await api.patch(`/entregas/${id}/status`, { status })
+    await api.patch(`/entregas/${id}/status`, {
+      status,
+      confirmationPin: status === 'Delivered' ? pin : undefined,
+    })
     successMessage.value = 'Status da entrega atualizado.'
     await loadCourierData()
   } catch (error) {
@@ -285,7 +348,12 @@ async function handleSaveBillingAddress() {
 }
 
 onMounted(() => {
+  void realtimeClient.connect()
   void loadCourierData()
+})
+
+onUnmounted(() => {
+  realtimeClient.disconnect()
 })
 </script>
 
@@ -316,6 +384,16 @@ onMounted(() => {
           >
             <Bike class="h-4 w-4" />
             {{ isAvailable ? 'Disponível para entregas' : 'Ficar disponível' }}
+          </button>
+
+          <button
+            type="button"
+            :disabled="loading || !isRegistrationComplete"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3.5 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50"
+            @click="handleSendCurrentGps"
+          >
+            <MapPin class="h-4 w-4 text-brand-600" />
+            Atualizar GPS
           </button>
 
           <button
@@ -536,20 +614,44 @@ onMounted(() => {
               <button
                 v-if="delivery.status === 'DriverAssigned'"
                 type="button"
+                class="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-semibold text-stone-800 hover:bg-stone-50"
+                @click="handleUpdateDeliveryStatus(delivery.id, 'PickedUp')"
+              >
+                Confirmar coleta
+              </button>
+
+              <button
+                v-if="delivery.status === 'DriverAssigned' || delivery.status === 'PickedUp'"
+                type="button"
                 class="rounded-lg bg-stone-900 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-stone-800"
                 @click="handleUpdateDeliveryStatus(delivery.id, 'InTransit')"
               >
                 Iniciar rota
               </button>
 
-              <button
-                v-if="delivery.status === 'DriverAssigned' || delivery.status === 'InTransit'"
-                type="button"
-                class="rounded-lg bg-green-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-green-700"
-                @click="handleUpdateDeliveryStatus(delivery.id, 'Delivered')"
+              <template
+                v-if="
+                  delivery.status === 'DriverAssigned' ||
+                  delivery.status === 'PickedUp' ||
+                  delivery.status === 'InTransit'
+                "
               >
-                Confirmar entrega
-              </button>
+                <input
+                  v-model="deliveryPins[delivery.id]"
+                  type="text"
+                  maxlength="6"
+                  :placeholder="isAdminUser ? 'PIN (Admin opc.)' : 'PIN 4 dígitos *'"
+                  class="w-28 rounded-lg border border-stone-300 px-2 py-1.5 text-center font-mono text-xs focus:border-brand-600 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  :disabled="!isAdminUser && !deliveryPins[delivery.id]?.trim()"
+                  class="rounded-lg bg-green-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-50"
+                  @click="handleUpdateDeliveryStatus(delivery.id, 'Delivered')"
+                >
+                  Confirmar entrega
+                </button>
+              </template>
             </div>
           </div>
         </div>
@@ -611,6 +713,30 @@ onMounted(() => {
                 placeholder="00000000000"
                 class="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none"
               />
+            </div>
+
+            <div>
+              <label class="block text-xs font-medium text-stone-700">
+                Anexo da CNH (Foto ou PDF)
+              </label>
+              <div class="mt-1 flex items-center gap-2">
+                <input
+                  v-model="cnhFileUrl"
+                  type="text"
+                  readonly
+                  placeholder="Nenhum arquivo anexado"
+                  class="flex-1 rounded-lg border border-stone-300 bg-stone-50 px-3 py-2 text-xs text-stone-600"
+                />
+                <label class="cursor-pointer rounded-lg border border-stone-300 bg-white px-3 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-50">
+                  {{ uploadingCnh ? 'Enviando...' : 'Anexar CNH' }}
+                  <input
+                    type="file"
+                    accept=".jpg,.jpeg,.png,.webp,.pdf"
+                    class="hidden"
+                    @change="handleUploadCnhFile"
+                  />
+                </label>
+              </div>
             </div>
 
             <button

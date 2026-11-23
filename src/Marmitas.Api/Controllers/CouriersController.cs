@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Marmitas.Application.Common.Interfaces;
+using Marmitas.Application.Platform.Dtos;
 using Marmitas.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -11,10 +12,14 @@ namespace Marmitas.Api.Controllers;
 public class CouriersController : ControllerBase
 {
     private readonly IDeliveryRepository _deliveries;
+    private readonly IRealtimeNotifier _realtimeNotifier;
 
-    public CouriersController(IDeliveryRepository deliveries)
+    public CouriersController(
+        IDeliveryRepository deliveries,
+        IRealtimeNotifier realtimeNotifier)
     {
         _deliveries = deliveries;
+        _realtimeNotifier = realtimeNotifier;
     }
 
     [HttpPost("registro")]
@@ -75,7 +80,7 @@ public class CouriersController : ControllerBase
                 courier.BillingZipCode = request.BillingZipCode.Trim();
         }
 
-        var targetCourierId = userId ?? courier.Id;
+        var targetCourierId = courier.Id;
 
         if (!string.IsNullOrWhiteSpace(request.Cpf))
         {
@@ -161,7 +166,8 @@ public class CouriersController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Type) || string.IsNullOrWhiteSpace(request.Number))
             throw new Exception("Tipo e número do documento são obrigatórios.");
 
-        var doc = await UpsertDocumentInternalAsync(GetUserId(), request.Type.Trim().ToUpperInvariant(), request.Number.Trim());
+        var courier = await EnsureCourierEntityAsync();
+        var doc = await UpsertDocumentInternalAsync(courier.Id, request.Type.Trim().ToUpperInvariant(), request.Number.Trim());
         await _deliveries.SaveChangesAsync();
         return StatusCode(201, doc);
     }
@@ -203,9 +209,10 @@ public class CouriersController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Model) || string.IsNullOrWhiteSpace(request.LicensePlate))
             throw new Exception("Modelo e placa do veículo são obrigatórios.");
 
+        var courier = await EnsureCourierEntityAsync();
         var vehicle = new CourierVehicle
         {
-            CourierId = GetUserId(),
+            CourierId = courier.Id,
             Type = string.IsNullOrWhiteSpace(request.Type) ? "Moto" : request.Type.Trim(),
             Model = request.Model.Trim(),
             LicensePlate = request.LicensePlate.Trim().ToUpperInvariant()
@@ -223,6 +230,13 @@ public class CouriersController : ControllerBase
         var vehicle = await _deliveries.GetVehicleByIdAsync(id);
         if (vehicle == null)
             throw new Exception("Veículo não encontrado.");
+
+        if (!User.IsInRole("admin") && !User.IsInRole("super_admin"))
+        {
+            var myVehicles = await _deliveries.GetVehiclesByCourierAsync(GetUserId());
+            if (!myVehicles.Any(v => v.Id == id))
+                return Forbid();
+        }
 
         vehicle.Type = request.Type.Trim();
         vehicle.Model = request.Model.Trim();
@@ -275,20 +289,7 @@ public class CouriersController : ControllerBase
             throw new Exception("Preencha todos os campos obrigatórios do endereço de cobrança (CEP, Rua, Número, Bairro, Cidade e UF).");
         }
 
-        var userId = GetUserId();
-        var courier = await _deliveries.GetCourierByUserIdAsync(userId);
-        if (courier == null)
-        {
-            courier = new Courier
-            {
-                UserId = userId,
-                Name = User.Identity?.Name ?? "Entregador",
-                Status = "Approved",
-                IsAvailable = true
-            };
-            await _deliveries.AddCourierAsync(courier);
-        }
-
+        var courier = await EnsureCourierEntityAsync();
         courier.BillingStreet = request.Street.Trim();
         courier.BillingNumber = request.Number.Trim();
         courier.BillingComplement = request.Complement?.Trim();
@@ -316,18 +317,33 @@ public class CouriersController : ControllerBase
     [Authorize(Roles = "driver,admin,super_admin")]
     public async Task<IActionResult> UpdateLocation([FromBody] UpdateLocationRequest request)
     {
-        var userId = GetUserId();
-        var courier = await _deliveries.GetCourierByUserIdAsync(userId);
-        if (courier != null)
+        var courier = await EnsureCourierEntityAsync();
+        courier.Latitude = request.Latitude;
+        courier.Longitude = request.Longitude;
+
+        await _deliveries.AddDriverLocationAsync(new DriverLocation
         {
-            courier.Latitude = request.Latitude;
-            courier.Longitude = request.Longitude;
-            await _deliveries.SaveChangesAsync();
+            CourierId = courier.Id,
+            DeliveryId = request.DeliveryId,
+            Latitude = request.Latitude,
+            Longitude = request.Longitude,
+            RecordedAt = DateTime.UtcNow
+        });
+
+        await _deliveries.SaveChangesAsync();
+
+        if (request.OrderId.HasValue)
+        {
+            await _realtimeNotifier.NotifyDriverLocationAsync(
+                request.OrderId.Value,
+                courier.Id,
+                request.Latitude,
+                request.Longitude);
         }
 
         return Ok(new
         {
-            courierId = userId,
+            courierId = courier.Id,
             latitude = request.Latitude,
             longitude = request.Longitude,
             updatedAt = DateTime.UtcNow
@@ -346,6 +362,13 @@ public class CouriersController : ControllerBase
     [Authorize(Roles = "driver,admin,super_admin")]
     public async Task<IActionResult> GetDeliveryHistory(Guid id)
     {
+        if (!User.IsInRole("admin") && !User.IsInRole("super_admin"))
+        {
+            var courier = await _deliveries.GetCourierByUserIdAsync(GetUserId());
+            if (courier == null || (courier.Id != id && courier.UserId != id && GetUserId() != id))
+                return Forbid();
+        }
+
         var list = await _deliveries.GetDeliveriesByCourierAsync(id);
         return Ok(list);
     }
@@ -356,14 +379,34 @@ public class CouriersController : ControllerBase
     {
         var userId = GetUserId();
         var deliveries = await _deliveries.GetDeliveriesByCourierAsync(userId);
-        var count = deliveries.Count(d => d.Status == "Delivered");
+        var completed = deliveries.Where(d => d.Status == "Delivered").ToList();
+        var totalEarnings = completed.Sum(d => d.DeliveryFee > 0 ? d.DeliveryFee : 8.50m);
 
         return Ok(new
         {
             courierId = userId,
-            completedDeliveries = count,
-            totalEarnings = count * 8.50m
+            completedDeliveries = completed.Count,
+            totalEarnings
         });
+    }
+
+    private async Task<Courier> EnsureCourierEntityAsync()
+    {
+        var userId = GetUserId();
+        var courier = await _deliveries.GetCourierByUserIdAsync(userId);
+        if (courier == null)
+        {
+            courier = new Courier
+            {
+                UserId = userId,
+                Name = User.Identity?.Name ?? "Entregador",
+                Status = "Approved",
+                IsAvailable = true
+            };
+            await _deliveries.AddCourierAsync(courier);
+        }
+
+        return courier;
     }
 
     private Guid GetUserId()
@@ -376,63 +419,4 @@ public class CouriersController : ControllerBase
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         return Guid.TryParse(sub, out var id) ? id : null;
     }
-}
-
-public class RegisterCourierRequest
-{
-    public string Name { get; set; } = string.Empty;
-    public string? Document { get; set; }
-    public string? Cpf { get; set; }
-    public string? Cnh { get; set; }
-    public string? Phone { get; set; }
-    public string? VehicleType { get; set; }
-    public string? VehicleModel { get; set; }
-    public string? VehiclePlate { get; set; }
-    public string? BillingStreet { get; set; }
-    public string? BillingNumber { get; set; }
-    public string? BillingComplement { get; set; }
-    public string? BillingNeighborhood { get; set; }
-    public string? BillingCity { get; set; }
-    public string? BillingState { get; set; }
-    public string? BillingZipCode { get; set; }
-}
-
-public class UpdateCourierStatusRequest
-{
-    public string Status { get; set; } = string.Empty;
-}
-
-public class SaveCourierDocumentRequest
-{
-    public string Type { get; set; } = "CNH";
-    public string Number { get; set; } = string.Empty;
-}
-
-public class SaveCourierVehicleRequest
-{
-    public string Type { get; set; } = "Moto";
-    public string Model { get; set; } = string.Empty;
-    public string LicensePlate { get; set; } = string.Empty;
-}
-
-public class SaveCourierBillingAddressRequest
-{
-    public string Street { get; set; } = string.Empty;
-    public string Number { get; set; } = string.Empty;
-    public string? Complement { get; set; }
-    public string Neighborhood { get; set; } = string.Empty;
-    public string City { get; set; } = string.Empty;
-    public string State { get; set; } = string.Empty;
-    public string ZipCode { get; set; } = string.Empty;
-}
-
-public class CourierBillingAddressDto : SaveCourierBillingAddressRequest
-{
-    public bool IsComplete { get; set; }
-}
-
-public class UpdateLocationRequest
-{
-    public double Latitude { get; set; }
-    public double Longitude { get; set; }
 }
