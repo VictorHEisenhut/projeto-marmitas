@@ -7,6 +7,8 @@ public class Subscription : Entity
     public Guid UserId { get; set; }
     public Guid PlanId { get; set; }
     public string PlanName { get; set; } = string.Empty;
+    public Guid RestaurantId { get; set; }
+    public string RestaurantName { get; set; } = string.Empty;
     public decimal MonthlyPrice { get; set; }
     public string Status { get; set; } = "Active";
     public DateTime StartDate { get; set; }
@@ -66,6 +68,9 @@ public class Subscription : Entity
 
     public decimal ChangePlan(Plan newPlan)
     {
+        if (RestaurantId != Guid.Empty && newPlan.RestaurantId != Guid.Empty && RestaurantId != newPlan.RestaurantId)
+            throw DomainException.Validation("Só é possível alterar para outro plano do mesmo restaurante.");
+
         var remainingDays = Math.Max(0, (NextBillingDate - DateTime.UtcNow).TotalDays);
         var cycleRatio = (decimal)Math.Min(1.0, remainingDays / 30.0);
         var currentCredit = Math.Round(MonthlyPrice * cycleRatio, 2);
@@ -74,6 +79,14 @@ public class Subscription : Entity
 
         PlanId = newPlan.Id;
         PlanName = newPlan.Name;
+        if (newPlan.RestaurantId != Guid.Empty)
+        {
+            RestaurantId = newPlan.RestaurantId;
+            PreferredRestaurantId = newPlan.RestaurantId;
+        }
+        if (!string.IsNullOrWhiteSpace(newPlan.RestaurantName))
+            RestaurantName = newPlan.RestaurantName;
+
         MonthlyPrice = newPlan.MonthlyPrice;
         TotalMealsInCycle = newPlan.MealsPerMonth > 0 ? newPlan.MealsPerMonth : newPlan.MealsPerWeek * 4;
         return difference;

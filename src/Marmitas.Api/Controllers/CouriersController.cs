@@ -317,6 +317,7 @@ public class CouriersController : ControllerBase
     [Authorize(Roles = "driver,admin,super_admin")]
     public async Task<IActionResult> UpdateLocation([FromBody] UpdateLocationRequest request)
     {
+        var userId = GetUserId();
         var courier = await EnsureCourierEntityAsync();
         courier.Latitude = request.Latitude;
         courier.Longitude = request.Longitude;
@@ -332,10 +333,23 @@ public class CouriersController : ControllerBase
 
         await _deliveries.SaveChangesAsync();
 
-        if (request.OrderId.HasValue)
+        var orderIdsToNotify = new HashSet<Guid>();
+        if (request.OrderId.HasValue && request.OrderId.Value != Guid.Empty)
+        {
+            orderIdsToNotify.Add(request.OrderId.Value);
+        }
+
+        var myDeliveries = await _deliveries.GetDeliveriesByCourierAsync(userId);
+        foreach (var activeDelivery in myDeliveries.Where(d =>
+            d.Status is "DriverAssigned" or "PickedUp" or "InTransit"))
+        {
+            orderIdsToNotify.Add(activeDelivery.OrderId);
+        }
+
+        foreach (var orderId in orderIdsToNotify)
         {
             await _realtimeNotifier.NotifyDriverLocationAsync(
-                request.OrderId.Value,
+                orderId,
                 courier.Id,
                 request.Latitude,
                 request.Longitude);
@@ -346,6 +360,7 @@ public class CouriersController : ControllerBase
             courierId = courier.Id,
             latitude = request.Latitude,
             longitude = request.Longitude,
+            notifiedOrders = orderIdsToNotify.Count,
             updatedAt = DateTime.UtcNow
         });
     }

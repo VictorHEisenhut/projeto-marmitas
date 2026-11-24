@@ -1,21 +1,28 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Utensils } from 'lucide-vue-next'
+import { ArrowLeft, ArrowRight, CheckCircle2, Search } from 'lucide-vue-next'
+import AuthLayout from '@/layouts/AuthLayout.vue'
+import AppButton from '@/components/ui/AppButton.vue'
+import AppInput from '@/components/ui/AppInput.vue'
 import { api, formatPhone, getErrorMessage } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import type { Courier } from '@/types'
 
 const auth = useAuthStore()
 
+const step = ref<1 | 2 | 3>(1)
+
 const name = ref('')
 const email = ref('')
 const password = ref('')
+const phone = ref('')
+
 const cpf = ref('')
 const cnh = ref('')
-const phone = ref('')
 const vehicleType = ref('Moto')
 const vehicleModel = ref('')
 const vehiclePlate = ref('')
+
 const billingZipCode = ref('')
 const billingStreet = ref('')
 const billingNumber = ref('')
@@ -24,29 +31,73 @@ const billingCity = ref('')
 const billingState = ref('SP')
 
 const loading = ref(false)
+const lookingUpCep = ref(false)
 const error = ref('')
 const submitted = ref<Courier | null>(null)
+
+const wizardSteps = [
+  { id: 1 as const, label: 'Acesso & Dados' },
+  { id: 2 as const, label: 'Docs & Veículo' },
+  { id: 3 as const, label: 'Cobrança' },
+]
 
 function onPhoneInput(event: Event) {
   const target = event.target as HTMLInputElement
   phone.value = formatPhone(target.value)
 }
 
+function goNextStep() {
+  error.value = ''
+  if (step.value === 1) {
+    if (!name.value.trim() || !phone.value.trim()) {
+      error.value = 'Informe seu nome completo e telefone.'
+      return
+    }
+    if (!auth.isAuthenticated && (!email.value.trim() || password.value.length < 8)) {
+      error.value = 'Informe um e-mail válido e uma senha com no mínimo 8 caracteres.'
+      return
+    }
+    step.value = 2
+    return
+  }
+  if (step.value === 2) {
+    if (!cpf.value.trim() || !cnh.value.trim()) {
+      error.value = 'CPF e CNH são obrigatórios.'
+      return
+    }
+    if (!vehicleModel.value.trim() || !vehiclePlate.value.trim()) {
+      error.value = 'Modelo e placa do veículo são obrigatórios.'
+      return
+    }
+    step.value = 3
+  }
+}
+
+async function handleLookupCep() {
+  const clean = billingZipCode.value.replace(/\D/g, '')
+  if (clean.length !== 8) return
+  lookingUpCep.value = true
+  try {
+    const { data } = await api.get<{
+      street: string
+      neighborhood: string
+      city: string
+      state: string
+    }>(`/geolocalizacao/cep/${clean}`)
+    if (data.street) billingStreet.value = data.street
+    if (data.neighborhood) billingNeighborhood.value = data.neighborhood
+    if (data.city) billingCity.value = data.city
+    if (data.state) billingState.value = data.state
+  } catch {
+    // Allow manual input
+  } finally {
+    lookingUpCep.value = false
+  }
+}
+
 async function handleSubmit() {
   error.value = ''
 
-  if (!name.value.trim()) {
-    error.value = 'O nome do entregador é obrigatório.'
-    return
-  }
-  if (!cpf.value.trim() || !cnh.value.trim()) {
-    error.value = 'CPF e CNH são obrigatórios.'
-    return
-  }
-  if (!vehicleModel.value.trim() || !vehiclePlate.value.trim()) {
-    error.value = 'Modelo e placa do veículo são obrigatórios.'
-    return
-  }
   if (
     !billingZipCode.value.trim() ||
     !billingStreet.value.trim() ||
@@ -55,7 +106,7 @@ async function handleSubmit() {
     !billingCity.value.trim() ||
     !billingState.value.trim()
   ) {
-    error.value = 'O endereço de cobrança completo é obrigatório.'
+    error.value = 'Preencha todos os campos do endereço de cobrança.'
     return
   }
 
@@ -68,6 +119,7 @@ async function handleSubmit() {
         phone: phone.value.trim() || null,
         password: password.value,
         role: 'driver',
+        termsAccepted: true,
       })
     }
 
@@ -97,268 +149,160 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col justify-center bg-stone-50 px-4 py-12 sm:px-6 lg:px-8">
-    <div class="sm:mx-auto sm:w-full sm:max-w-lg">
-      <RouterLink to="/" class="flex items-center justify-center gap-2 text-stone-900">
-        <span class="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-600 text-white">
-          <Utensils class="h-5 w-5" />
-        </span>
-        <span class="text-xl font-bold">Marmitas</span>
+  <AuthLayout
+    title="Cadastro de Entregador"
+    subtitle="Complete as 3 etapas obrigatórias para entrar na fila de corridas."
+    wide
+  >
+    <!-- Success Screen -->
+    <div v-if="submitted" class="space-y-5 text-center py-4">
+      <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-fresh-50 text-fresh-600 dark:bg-fresh-950/60 dark:text-fresh-400">
+        <CheckCircle2 class="h-8 w-8" />
+      </div>
+      <div class="space-y-1.5">
+        <h2 class="font-display text-xl font-extrabold text-ink">Cadastro concluído!</h2>
+        <p class="text-sm text-ink-secondary">
+          O cadastro de <strong class="text-ink">{{ submitted.name }}</strong> foi registrado com CPF, CNH, veículo e endereço de cobrança.
+        </p>
+      </div>
+      <RouterLink to="/login" class="block">
+        <AppButton variant="primary" size="lg" block>Ir para o login</AppButton>
       </RouterLink>
-
-      <h1 class="mt-6 text-center text-2xl font-bold text-stone-900">
-        Cadastro Completo de Entregador
-      </h1>
-      <p class="mt-1 text-center text-sm text-stone-600">
-        Informe seus dados obrigatórios (CPF, CNH, Veículo e Endereço de Cobrança).
-      </p>
     </div>
 
-    <div class="mt-8 sm:mx-auto sm:w-full sm:max-w-lg">
-      <div class="rounded-xl border border-stone-200 bg-white p-6 shadow-sm sm:p-8">
-        <div v-if="submitted" class="space-y-4">
-          <div class="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
-            <p class="font-semibold">Cadastro realizado com sucesso!</p>
-            <p class="mt-1">
-              O cadastro de <strong>{{ submitted.name }}</strong> foi registrado com seus documentos,
-              veículo e endereço de cobrança.
-            </p>
-          </div>
-
-          <RouterLink
-            to="/login"
-            class="block w-full rounded-lg bg-brand-600 px-4 py-2.5 text-center text-sm font-semibold text-white hover:bg-brand-700"
-          >
-            Ir para o login
-          </RouterLink>
-        </div>
-
-        <form v-else class="space-y-4" @submit.prevent="handleSubmit">
+    <!-- 3-Step Wizard -->
+    <div v-else class="space-y-6">
+      <!-- Visual Stepper -->
+      <div class="grid grid-cols-3 gap-2">
+        <div
+          v-for="s in wizardSteps"
+          :key="s.id"
+          class="space-y-1.5"
+        >
           <div
-            v-if="error"
-            role="alert"
-            class="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+            class="h-1.5 rounded-full transition-colors"
+            :class="step >= s.id ? 'bg-brand-600' : 'bg-surface-muted'"
+          />
+          <p
+            class="text-center text-[11px] font-bold"
+            :class="step >= s.id ? 'text-ink' : 'text-ink-muted'"
           >
-            {{ error }}
-          </div>
+            {{ s.id }}. {{ s.label }}
+          </p>
+        </div>
+      </div>
 
-          <div>
-            <label for="name" class="block text-sm font-medium text-stone-700">
-              Nome completo <span class="text-red-500">*</span>
-            </label>
-            <input
-              id="name"
-              v-model="name"
-              type="text"
-              required
-              placeholder="João da Silva"
-              class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600"
-            />
-          </div>
+      <div
+        v-if="error"
+        role="alert"
+        class="rounded-xl border border-red-200 bg-red-50 p-3.5 text-xs font-medium text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
+      >
+        {{ error }}
+      </div>
+
+      <form class="space-y-4" @submit.prevent="step < 3 ? goNextStep() : handleSubmit()">
+        <!-- Step 1: Access & Personal Info -->
+        <template v-if="step === 1">
+          <AppInput v-model="name" label="Nome completo" required placeholder="João da Silva" />
 
           <div v-if="!auth.isAuthenticated" class="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label for="email" class="block text-sm font-medium text-stone-700">
-                E-mail de acesso <span class="text-red-500">*</span>
-              </label>
-              <input
-                id="email"
-                v-model="email"
-                type="email"
-                required
-                placeholder="entregador@email.com"
-                class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600"
-              />
-            </div>
-
-            <div>
-              <label for="password" class="block text-sm font-medium text-stone-700">
-                Senha (mín. 8 caracteres) <span class="text-red-500">*</span>
-              </label>
-              <input
-                id="password"
-                v-model="password"
-                type="password"
-                minlength="8"
-                required
-                placeholder="Mínimo 8 caracteres"
-                class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600"
-              />
-            </div>
+            <AppInput v-model="email" label="E-mail de acesso" type="email" required placeholder="entregador@email.com" />
+            <AppInput v-model="password" label="Senha (mín. 8 caracteres)" type="password" minlength="8" required placeholder="••••••••" />
           </div>
 
+          <AppInput
+            :model-value="phone"
+            label="Telefone / WhatsApp"
+            type="tel"
+            required
+            placeholder="(11) 99999-9999"
+            @input="onPhoneInput"
+          />
+        </template>
+
+        <!-- Step 2: Documents & Vehicle -->
+        <template v-else-if="step === 2">
           <div class="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label for="cpf" class="block text-sm font-medium text-stone-700">
-                CPF <span class="text-red-500">*</span>
-              </label>
-              <input
-                id="cpf"
-                v-model="cpf"
-                type="text"
-                required
-                placeholder="000.000.000-00"
-                class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600"
-              />
-            </div>
-
-            <div>
-              <label for="cnh" class="block text-sm font-medium text-stone-700">
-                CNH <span class="text-red-500">*</span>
-              </label>
-              <input
-                id="cnh"
-                v-model="cnh"
-                type="text"
-                required
-                placeholder="00000000000"
-                class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600"
-              />
-            </div>
+            <AppInput v-model="cpf" label="CPF" required placeholder="000.000.000-00" />
+            <AppInput v-model="cnh" label="Número da CNH" required placeholder="00000000000" />
           </div>
 
-          <div>
-            <label for="phone" class="block text-sm font-medium text-stone-700">
-              Telefone <span class="text-red-500">*</span>
-            </label>
-            <input
-              id="phone"
-              :value="phone"
-              type="tel"
-              required
-              placeholder="(11) 99999-9999"
-              class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600"
-              @input="onPhoneInput"
-            />
-          </div>
-
-          <div class="rounded-lg border border-stone-200 bg-stone-50 p-3 space-y-3">
-            <h2 class="text-xs font-bold uppercase tracking-wide text-stone-700">
-              Veículo Obrigatório
-            </h2>
-            <div class="grid gap-2 sm:grid-cols-3">
-              <div>
-                <label class="block text-xs font-medium text-stone-700">Tipo *</label>
+          <div class="rounded-2xl border border-line bg-surface-subtle p-4 space-y-3">
+            <p class="text-xs font-bold uppercase tracking-wider text-ink-secondary">Veículo Obrigatório</p>
+            <div class="grid gap-3 sm:grid-cols-3">
+              <div class="space-y-1.5">
+                <label class="block text-xs font-semibold text-ink-secondary">Tipo *</label>
                 <select
                   v-model="vehicleType"
-                  class="mt-1 block w-full rounded-lg border border-stone-300 bg-white px-2.5 py-2 text-sm"
+                  class="w-full rounded-xl border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink"
                 >
                   <option value="Moto">Moto</option>
                   <option value="Bicicleta">Bicicleta</option>
                   <option value="Carro">Carro</option>
                 </select>
               </div>
-              <div>
-                <label class="block text-xs font-medium text-stone-700">Modelo *</label>
-                <input
-                  v-model="vehicleModel"
-                  type="text"
-                  required
-                  placeholder="CG 160"
-                  class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
-                />
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-stone-700">Placa *</label>
-                <input
-                  v-model="vehiclePlate"
-                  type="text"
-                  required
-                  placeholder="ABC1D23"
-                  class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm uppercase"
-                />
-              </div>
+              <AppInput v-model="vehicleModel" label="Modelo" required placeholder="CG 160" />
+              <AppInput v-model="vehiclePlate" label="Placa" required placeholder="ABC1D23" input-class="uppercase" />
+            </div>
+          </div>
+        </template>
+
+        <!-- Step 3: Billing Address + Review Summary -->
+        <template v-else>
+          <div class="space-y-3">
+            <div class="flex items-end gap-2">
+              <AppInput v-model="billingZipCode" label="CEP (Cobrança)" required placeholder="00000-000" class="flex-1" @blur="handleLookupCep" />
+              <AppButton type="button" variant="outline" size="md" :loading="lookingUpCep" @click="handleLookupCep">
+                <Search class="h-4 w-4" />
+                CEP
+              </AppButton>
+            </div>
+
+            <div class="grid gap-3 sm:grid-cols-4">
+              <AppInput v-model="billingStreet" label="Rua / Logradouro" required class="sm:col-span-3" />
+              <AppInput v-model="billingNumber" label="Número" required />
+            </div>
+
+            <div class="grid gap-3 sm:grid-cols-3">
+              <AppInput v-model="billingNeighborhood" label="Bairro" required />
+              <AppInput v-model="billingCity" label="Cidade" required />
+              <AppInput v-model="billingState" label="UF" required maxlength="2" input-class="uppercase" />
             </div>
           </div>
 
-          <div class="rounded-lg border border-stone-200 bg-stone-50 p-3 space-y-3">
-            <div>
-              <h2 class="text-xs font-bold uppercase tracking-wide text-stone-700">
-                Endereço de Cobrança (Obrigatório)
-              </h2>
-              <p class="text-[11px] text-stone-500">
-                Exclusivo para faturamento do entregador (não é endereço de entrega).
-              </p>
-            </div>
-            <div class="grid gap-2 sm:grid-cols-3">
-              <div>
-                <label class="block text-xs font-medium text-stone-700">CEP *</label>
-                <input
-                  v-model="billingZipCode"
-                  type="text"
-                  required
-                  placeholder="00000-000"
-                  class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
-                />
-              </div>
-              <div class="sm:col-span-2">
-                <label class="block text-xs font-medium text-stone-700">Rua / Logradouro *</label>
-                <input
-                  v-model="billingStreet"
-                  type="text"
-                  required
-                  placeholder="Rua Exemplo"
-                  class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
-                />
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-stone-700">Número *</label>
-                <input
-                  v-model="billingNumber"
-                  type="text"
-                  required
-                  placeholder="100"
-                  class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
-                />
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-stone-700">Bairro *</label>
-                <input
-                  v-model="billingNeighborhood"
-                  type="text"
-                  required
-                  placeholder="Centro"
-                  class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
-                />
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-stone-700">Cidade / UF *</label>
-                <div class="mt-1 flex gap-1">
-                  <input
-                    v-model="billingCity"
-                    type="text"
-                    required
-                    placeholder="São Paulo"
-                    class="block w-full rounded-lg border border-stone-300 px-2.5 py-2 text-sm"
-                  />
-                  <input
-                    v-model="billingState"
-                    type="text"
-                    maxlength="2"
-                    required
-                    placeholder="SP"
-                    class="block w-14 rounded-lg border border-stone-300 px-2 py-2 text-center text-sm uppercase"
-                  />
-                </div>
-              </div>
-            </div>
+          <!-- Quick Review Box -->
+          <div class="rounded-2xl border border-line bg-surface-subtle p-3.5 text-xs text-ink-secondary space-y-1">
+            <p class="font-bold text-ink">Resumo do cadastro</p>
+            <p>{{ name }} · {{ phone }}</p>
+            <p>CPF {{ cpf }} · CNH {{ cnh }} · {{ vehicleType }} {{ vehicleModel }} ({{ vehiclePlate.toUpperCase() }})</p>
           </div>
+        </template>
 
-          <button
-            type="submit"
-            :disabled="loading"
-            class="w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
-          >
-            {{ loading ? 'Enviando...' : 'Concluir cadastro de entregador' }}
-          </button>
-        </form>
+        <!-- Navigation Controls -->
+        <div class="flex items-center justify-between gap-3 pt-2">
+          <AppButton v-if="step > 1" type="button" variant="outline" size="md" @click="step = (step - 1) as 1 | 2">
+            <ArrowLeft class="h-4 w-4" />
+            Voltar
+          </AppButton>
+          <div v-else />
 
-        <div class="mt-6 border-t border-stone-200 pt-4 text-center">
-          <RouterLink to="/login" class="text-sm font-medium text-stone-600 hover:text-brand-600">
-            Voltar para o login
-          </RouterLink>
+          <AppButton v-if="step < 3" type="submit" variant="primary" size="md">
+            <span>Próxima etapa</span>
+            <ArrowRight class="h-4 w-4" />
+          </AppButton>
+
+          <AppButton v-else type="submit" variant="fresh" size="lg" :loading="loading">
+            Concluir cadastro de entregador
+          </AppButton>
         </div>
-      </div>
+      </form>
     </div>
-  </div>
+
+    <template #footer>
+      Já tem cadastro?
+      <RouterLink to="/login" class="font-bold text-brand-600 hover:underline dark:text-brand-400">
+        Voltar para o login
+      </RouterLink>
+    </template>
+  </AuthLayout>
 </template>

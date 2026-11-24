@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Sparkles, X, Loader2, Plus, Flame, Dumbbell, Wheat, HeartPulse } from 'lucide-vue-next'
+import { Dumbbell, Flame, HeartPulse, Plus, Sparkles, Wheat } from 'lucide-vue-next'
+import AppModal from '@/components/ui/AppModal.vue'
+import AppButton from '@/components/ui/AppButton.vue'
+import AppBadge from '@/components/ui/AppBadge.vue'
 import { formatCurrency, getErrorMessage } from '@/services/api'
 import { getAiMarmitaRecommendations } from '@/services/ai'
 import type { AiRecommendationResponse, Product } from '@/types'
@@ -24,14 +27,34 @@ const error = ref('')
 const aiResult = ref<AiRecommendationResponse | null>(null)
 
 const quickGoals = [
-  { label: '💪 Alta Proteína', goal: 'hipertrofia', query: 'Opção com alto teor de proteínas para ganho de massa ou pós-treino' },
-  { label: '🥗 Low Carb & Leve', goal: 'low carb', query: 'Prato leve com baixo teor de carboidratos e boa saciedade' },
-  { label: '🌱 Vegetariano', goal: 'vegetariano', query: 'Opção nutritiva sem carne, rica em fibras e vegetais' },
-  { label: '💰 Mais Econômica', goal: 'economico', query: 'Melhor custo-benefício mantendo refeição equilibrada' },
-  { label: '⚡ Equilíbrio & Energia', goal: 'energia', query: 'Refeição balanceada com carboidratos complexos para o dia de trabalho' },
+  {
+    label: 'Alta Proteína',
+    goal: 'hipertrofia',
+    query: 'Opção com alto teor de proteínas para ganho de massa ou pós-treino',
+  },
+  {
+    label: 'Low Carb & Leve',
+    goal: 'low carb',
+    query: 'Prato leve com baixo teor de carboidratos e boa saciedade',
+  },
+  {
+    label: 'Vegetariano',
+    goal: 'vegetariano',
+    query: 'Opção nutritiva sem carne, rica em fibras e vegetais',
+  },
+  {
+    label: 'Mais Econômica',
+    goal: 'economico',
+    query: 'Melhor custo-benefício mantendo refeição equilibrada',
+  },
+  {
+    label: 'Equilíbrio & Energia',
+    goal: 'energia',
+    query: 'Refeição balanceada com carboidratos complexos para o dia de trabalho',
+  },
 ]
 
-function applyGoal(item: typeof quickGoals[0]) {
+function applyGoal(item: (typeof quickGoals)[number]) {
   selectedGoal.value = item.goal
   query.value = item.query
   void handleSearch()
@@ -39,7 +62,7 @@ function applyGoal(item: typeof quickGoals[0]) {
 
 async function handleSearch() {
   if (!query.value.trim() && !selectedGoal.value) {
-    error.value = 'Selecione uma opção rápida ou escreva o que você deseja.'
+    error.value = 'Selecione um objetivo rápido ou escreva o que você procura.'
     return
   }
 
@@ -68,202 +91,224 @@ function handleAdd(productId: string) {
   }
 }
 
-function handleClose() {
-  emit('close')
+function getMacroPercent(value: number, total: number): number {
+  if (!total || total <= 0) return 0
+  return Math.min(100, Math.round((value / total) * 100))
 }
 </script>
 
 <template>
-  <div
-    v-if="isOpen"
-    class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-stone-900/60 p-4 backdrop-blur-sm"
-    @click.self="handleClose"
+  <AppModal
+    :open="isOpen"
+    max-width="2xl"
+    sheet-on-mobile
+    @close="emit('close')"
   >
-    <div
-      class="relative w-full max-w-2xl rounded-2xl border border-stone-200 bg-white shadow-2xl transition-all"
-    >
-      <!-- Header -->
-      <div class="flex items-center justify-between border-b border-stone-100 p-5 sm:p-6 bg-gradient-to-r from-brand-50 to-amber-50 rounded-t-2xl">
-        <div class="flex items-center gap-3">
-          <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-600 text-white shadow-sm">
-            <Sparkles class="h-5 w-5" />
-          </div>
-          <div>
-            <h3 class="text-lg font-bold text-stone-900 flex items-center gap-2">
-              Chef & Nutricionista IA
-              <span class="rounded-full bg-brand-100 px-2 py-0.5 text-xs font-semibold text-brand-700">
-                Gemini 3.8 Flash
-              </span>
-            </h3>
-            <p class="text-xs text-stone-600 sm:text-sm">
-              {{ restaurantName ? `Cardápio de ${restaurantName}` : 'Descubra a marmita ideal para suas metas' }}
-            </p>
-          </div>
+    <template #header>
+      <div class="flex items-center gap-3">
+        <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-600 to-amber-500 text-white shadow-sm">
+          <Sparkles class="h-5 w-5" />
         </div>
-        <button
-          type="button"
-          class="rounded-lg p-1.5 text-stone-400 hover:bg-stone-200/60 hover:text-stone-700"
-          @click="handleClose"
-        >
-          <X class="h-5 w-5" />
-        </button>
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2">
+            <h3 class="font-display text-lg font-extrabold text-ink">
+              Chef & Nutricionista IA
+            </h3>
+            <AppBadge variant="brand" size="xs">Gemini IA</AppBadge>
+          </div>
+          <p class="truncate text-xs text-ink-muted">
+            {{ restaurantName ? `Analisando o cardápio de ${restaurantName}` : 'Recomendações personalizadas para suas metas' }}
+          </p>
+        </div>
+      </div>
+    </template>
+
+    <div class="space-y-5">
+      <!-- Quick Goal Chips -->
+      <div>
+        <p class="mb-2 text-[11px] font-bold uppercase tracking-wider text-ink-muted">
+          Escolha um objetivo rápido
+        </p>
+        <div class="flex flex-wrap gap-2">
+          <button
+            v-for="item in quickGoals"
+            :key="item.goal"
+            type="button"
+            class="rounded-full border px-3.5 py-1.5 text-xs font-semibold transition"
+            :class="
+              selectedGoal === item.goal
+                ? 'border-brand-600 bg-brand-600 text-white shadow-sm'
+                : 'border-line bg-surface-subtle text-ink-secondary hover:border-brand-400 hover:text-ink'
+            "
+            @click="applyGoal(item)"
+          >
+            {{ item.label }}
+          </button>
+        </div>
       </div>
 
-      <!-- Body -->
-      <div class="max-h-[75vh] overflow-y-auto p-5 sm:p-6 space-y-5">
-        <!-- Quick goal chips -->
-        <div>
-          <label class="block text-xs font-semibold uppercase tracking-wider text-stone-500 mb-2">
-            Objetivos rápidos
-          </label>
-          <div class="flex flex-wrap gap-2">
-            <button
-              v-for="item in quickGoals"
-              :key="item.goal"
-              type="button"
-              class="rounded-full border px-3 py-1.5 text-xs font-medium transition"
-              :class="
-                selectedGoal === item.goal
-                  ? 'border-brand-600 bg-brand-600 text-white shadow-sm'
-                  : 'border-stone-200 bg-stone-50 text-stone-700 hover:border-brand-300 hover:bg-white'
-              "
-              @click="applyGoal(item)"
-            >
-              {{ item.label }}
-            </button>
-          </div>
+      <!-- Conversational Prompt Input -->
+      <div class="space-y-2">
+        <label class="block text-[11px] font-bold uppercase tracking-wider text-ink-muted">
+          Ou conte ao Chef o que você deseja hoje
+        </label>
+        <div class="flex flex-col gap-2 sm:flex-row">
+          <input
+            v-model="query"
+            type="text"
+            placeholder="Ex: Treinei hoje cedo, quero algo com bastante proteína e carboidrato leve..."
+            class="flex-1 rounded-xl border border-line-strong bg-surface px-4 py-2.5 text-sm text-ink placeholder:text-ink-muted/70 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+            @keyup.enter="handleSearch"
+          />
+          <AppButton
+            variant="primary"
+            size="md"
+            :loading="loading"
+            @click="handleSearch"
+          >
+            <Sparkles v-if="!loading" class="h-4 w-4" />
+            <span>Consultar</span>
+          </AppButton>
         </div>
+      </div>
 
-        <!-- Custom prompt input -->
-        <div class="space-y-2">
-          <label class="block text-xs font-semibold uppercase tracking-wider text-stone-500">
-            Ou descreva o que você procura
-          </label>
-          <div class="flex gap-2">
-            <input
-              v-model="query"
-              type="text"
-              placeholder="Ex: Treinei perna hoje, quero algo com arroz integral e muita proteína..."
-              class="flex-1 rounded-xl border border-stone-300 px-3.5 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              @keyup.enter="handleSearch"
-            />
-            <button
-              type="button"
-              :disabled="loading"
-              class="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 disabled:opacity-50"
-              @click="handleSearch"
-            >
-              <Loader2 v-if="loading" class="h-4 w-4 animate-spin" />
-              <Sparkles v-else class="h-4 w-4" />
-              <span>Consultar</span>
-            </button>
-          </div>
+      <!-- Error -->
+      <div
+        v-if="error"
+        class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-medium text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
+      >
+        {{ error }}
+      </div>
+
+      <!-- Themed Loading State -->
+      <div
+        v-if="loading"
+        class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-brand-200 bg-brand-50/40 py-10 text-center dark:border-brand-800/60 dark:bg-brand-950/20"
+      >
+        <div class="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-600 text-white shadow-md animate-pulse">
+          <Sparkles class="h-6 w-6" />
         </div>
+        <p class="font-display text-sm font-bold text-ink">
+          O Chef IA está montando sua curadoria nutricional...
+        </p>
+        <p class="mt-1 text-xs text-ink-muted">
+          Estimando calorias, proteínas, carboidratos e equilíbrio dos pratos
+        </p>
+      </div>
 
-        <!-- Error Message -->
-        <div
-          v-if="error"
-          class="rounded-xl border border-red-200 bg-red-50 p-3.5 text-sm text-red-700"
-        >
-          {{ error }}
-        </div>
-
-        <!-- Loading state -->
-        <div v-if="loading" class="py-10 text-center space-y-3">
-          <div class="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-100 text-brand-600 animate-pulse">
-            <Sparkles class="h-6 w-6 animate-spin" />
-          </div>
-          <p class="text-sm font-medium text-stone-700">O Gemini está analisando os pratos e valores nutricionais...</p>
-          <p class="text-xs text-stone-400">Calculando calorias, proteínas e equilíbrio dos ingredientes</p>
-        </div>
-
-        <!-- AI Results -->
-        <div v-else-if="aiResult" class="space-y-4">
-          <!-- Advice Banner -->
-          <div class="rounded-xl border border-amber-200/80 bg-amber-50/70 p-4 text-sm text-stone-800">
-            <div class="flex items-start gap-2.5">
-              <HeartPulse class="h-5 w-5 text-brand-600 shrink-0 mt-0.5" />
-              <div class="space-y-1">
-                <span class="font-bold text-stone-900">Avaliação do Nutricionista IA:</span>
-                <p class="text-stone-700 leading-relaxed">{{ aiResult.generalAdvice }}</p>
-              </div>
+      <!-- AI Results -->
+      <div v-else-if="aiResult" class="space-y-4">
+        <div class="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-800/60 dark:bg-amber-950/30">
+          <div class="flex items-start gap-3">
+            <HeartPulse class="mt-0.5 h-5 w-5 shrink-0 text-brand-600 dark:text-brand-400" />
+            <div class="space-y-1">
+              <p class="text-xs font-extrabold uppercase tracking-wide text-ink">
+                Avaliação Nutricional
+              </p>
+              <p class="text-sm leading-relaxed text-ink-secondary">
+                {{ aiResult.generalAdvice }}
+              </p>
             </div>
           </div>
+        </div>
 
-          <!-- Recommendations List -->
-          <div class="space-y-3">
-            <h4 class="text-xs font-semibold uppercase tracking-wider text-stone-500">
-              Pratos recomendados para você ({{ aiResult.recommendations.length }})
-            </h4>
+        <div class="space-y-3">
+          <h4 class="text-xs font-bold uppercase tracking-wider text-ink-muted">
+            Pratos sugeridos ({{ aiResult.recommendations.length }})
+          </h4>
 
-            <div
-              v-for="item in aiResult.recommendations"
-              :key="item.productId"
-              class="rounded-xl border border-stone-200 bg-white p-4 transition hover:border-brand-400 hover:shadow-sm"
-            >
-              <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <div class="space-y-1">
-                  <div class="flex items-center gap-2">
-                    <span class="text-base font-bold text-stone-900">{{ item.productName }}</span>
-                    <span class="text-sm font-semibold text-brand-600">{{ formatCurrency(item.price) }}</span>
-                  </div>
-                  <p class="text-xs text-stone-600">{{ item.whyRecommended }}</p>
-                </div>
-
-                <button
-                  type="button"
-                  class="inline-flex items-center justify-center gap-1.5 rounded-lg bg-stone-900 px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-600 shrink-0"
-                  @click="handleAdd(item.productId)"
-                >
-                  <Plus class="h-3.5 w-3.5" />
-                  <span>Adicionar</span>
-                </button>
-              </div>
-
-              <!-- Nutrition Estimate Badges -->
-              <div class="mt-3 pt-3 border-t border-stone-100 flex flex-wrap items-center gap-3 text-xs text-stone-600">
-                <div class="flex items-center gap-1 font-medium text-amber-700">
-                  <Flame class="h-3.5 w-3.5" />
-                  <span>~{{ item.nutritionalEstimate.calories }} kcal</span>
-                </div>
-                <div class="flex items-center gap-1 font-medium text-emerald-700">
-                  <Dumbbell class="h-3.5 w-3.5" />
-                  <span>{{ item.nutritionalEstimate.protein }}g proteína</span>
-                </div>
-                <div class="flex items-center gap-1 text-stone-600">
-                  <Wheat class="h-3.5 w-3.5" />
-                  <span>{{ item.nutritionalEstimate.carbs }}g carb</span>
-                </div>
-                <div class="flex items-center gap-1 text-stone-500">
-                  <span>{{ item.nutritionalEstimate.fat }}g gordura</span>
-                </div>
-
-                <div class="flex flex-wrap gap-1 ml-auto">
-                  <span
-                    v-for="tag in item.tags"
-                    :key="tag"
-                    class="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-medium text-stone-600"
-                  >
-                    {{ tag }}
+          <div
+            v-for="item in aiResult.recommendations"
+            :key="item.productId"
+            class="rounded-2xl border border-line bg-surface p-4 shadow-card transition hover:border-brand-400"
+          >
+            <div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+              <div class="space-y-1 min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="font-display text-base font-extrabold text-ink">
+                    {{ item.productName }}
+                  </span>
+                  <span class="font-display text-sm font-bold text-brand-600 dark:text-brand-400 tabular-nums">
+                    {{ formatCurrency(item.price) }}
                   </span>
                 </div>
+                <p class="text-xs leading-relaxed text-ink-secondary">
+                  {{ item.whyRecommended }}
+                </p>
+              </div>
+
+              <AppButton
+                variant="primary"
+                size="sm"
+                class="shrink-0"
+                @click="handleAdd(item.productId)"
+              >
+                <Plus class="h-3.5 w-3.5" />
+                <span>Adicionar à sacola</span>
+              </AppButton>
+            </div>
+
+            <!-- Macro Badges + Visual Proportional Bar -->
+            <div class="mt-3.5 space-y-2 border-t border-line pt-3">
+              <div class="flex flex-wrap items-center gap-3 text-xs">
+                <span class="inline-flex items-center gap-1 font-bold text-amber-700 dark:text-amber-400 tabular-nums">
+                  <Flame class="h-3.5 w-3.5" />
+                  ~{{ item.nutritionalEstimate.calories }} kcal
+                </span>
+                <span class="inline-flex items-center gap-1 font-bold text-fresh-700 dark:text-fresh-400 tabular-nums">
+                  <Dumbbell class="h-3.5 w-3.5" />
+                  {{ item.nutritionalEstimate.protein }}g prot
+                </span>
+                <span class="inline-flex items-center gap-1 font-semibold text-sky-700 dark:text-sky-400 tabular-nums">
+                  <Wheat class="h-3.5 w-3.5" />
+                  {{ item.nutritionalEstimate.carbs }}g carb
+                </span>
+                <span class="text-ink-muted font-medium tabular-nums">
+                  {{ item.nutritionalEstimate.fat }}g gord
+                </span>
+
+                <div v-if="item.tags?.length" class="ml-auto flex flex-wrap gap-1">
+                  <AppBadge v-for="tag in item.tags" :key="tag" variant="neutral" size="xs">
+                    {{ tag }}
+                  </AppBadge>
+                </div>
+              </div>
+
+              <!-- Visual Macro Distribution Bar -->
+              <div class="flex h-1.5 w-full overflow-hidden rounded-full bg-surface-muted">
+                <div
+                  class="bg-fresh-500"
+                  :style="{
+                    width: `${getMacroPercent(item.nutritionalEstimate.protein, item.nutritionalEstimate.protein + item.nutritionalEstimate.carbs + item.nutritionalEstimate.fat)}%`,
+                  }"
+                  title="Proteínas"
+                />
+                <div
+                  class="bg-sky-500"
+                  :style="{
+                    width: `${getMacroPercent(item.nutritionalEstimate.carbs, item.nutritionalEstimate.protein + item.nutritionalEstimate.carbs + item.nutritionalEstimate.fat)}%`,
+                  }"
+                  title="Carboidratos"
+                />
+                <div
+                  class="bg-amber-400"
+                  :style="{
+                    width: `${getMacroPercent(item.nutritionalEstimate.fat, item.nutritionalEstimate.protein + item.nutritionalEstimate.carbs + item.nutritionalEstimate.fat)}%`,
+                  }"
+                  title="Gorduras"
+                />
               </div>
             </div>
           </div>
         </div>
       </div>
-
-      <!-- Footer -->
-      <div class="border-t border-stone-100 px-6 py-3.5 bg-stone-50/60 rounded-b-2xl flex justify-between items-center text-xs text-stone-500">
-        <span>As informações nutricionais são estimativas orientativas.</span>
-        <button
-          type="button"
-          class="font-medium text-stone-600 hover:text-stone-900"
-          @click="handleClose"
-        >
-          Fechar
-        </button>
-      </div>
     </div>
-  </div>
+
+    <template #footer>
+      <div class="flex items-center justify-between text-xs text-ink-muted">
+        <span>Estimativas nutricionais orientativas geradas por IA.</span>
+        <AppButton variant="ghost" size="xs" @click="emit('close')">Fechar</AppButton>
+      </div>
+    </template>
+  </AppModal>
 </template>

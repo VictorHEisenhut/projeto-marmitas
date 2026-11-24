@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Utensils } from 'lucide-vue-next'
+import { ArrowRight, CheckCircle2, Mail } from 'lucide-vue-next'
+import AuthLayout from '@/layouts/AuthLayout.vue'
+import AppButton from '@/components/ui/AppButton.vue'
+import AppInput from '@/components/ui/AppInput.vue'
 import { api, getErrorMessage } from '@/services/api'
 import type { ForgotPasswordResponse } from '@/types'
 
@@ -14,7 +17,6 @@ const result = ref<ForgotPasswordResponse | null>(null)
 
 async function handleSubmit() {
   error.value = ''
-
   if (!email.value.trim()) {
     error.value = 'Informe o e-mail da conta.'
     return
@@ -46,83 +48,67 @@ function goToReset() {
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col justify-center bg-stone-50 px-4 py-12 sm:px-6 lg:px-8">
-    <div class="sm:mx-auto sm:w-full sm:max-w-md">
-      <RouterLink to="/" class="flex items-center justify-center gap-2 text-stone-900">
-        <span class="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-600 text-white">
-          <Utensils class="h-5 w-5" />
-        </span>
-        <span class="text-xl font-bold">Marmitas</span>
-      </RouterLink>
+  <AuthLayout
+    title="Recuperar senha"
+    subtitle="Informe seu e-mail cadastrado para gerar um código de verificação."
+  >
+    <div v-if="result" class="space-y-5">
+      <div class="rounded-2xl border border-fresh-200 bg-fresh-50/80 p-4 text-center space-y-2 dark:border-fresh-800/60 dark:bg-fresh-950/35">
+        <CheckCircle2 class="mx-auto h-8 w-8 text-fresh-600" />
+        <p class="text-sm font-bold text-ink">{{ result.message }}</p>
+        <p class="text-xs text-ink-secondary">Conta: {{ result.email }}</p>
 
-      <h1 class="mt-6 text-center text-2xl font-bold text-stone-900">
-        Recuperar senha
-      </h1>
-      <p class="mt-1 text-center text-sm text-stone-600">
-        Informe seu e-mail cadastrado para redefinir sua senha.
-      </p>
-    </div>
-
-    <div class="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-      <div class="rounded-xl border border-stone-200 bg-white p-6 shadow-sm sm:p-8">
-        <div v-if="result" class="space-y-4">
-          <div class="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
-            <p class="font-semibold">{{ result.message }}</p>
-            <p class="mt-1 text-xs text-green-700">Conta: {{ result.email }}</p>
-            <p v-if="result.resetCode" class="mt-2 rounded bg-white/80 px-2.5 py-1.5 font-mono text-xs font-bold text-stone-900">
-              Código de verificação: {{ result.resetCode }}
-            </p>
-          </div>
-
-          <button
-            type="button"
-            class="w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700"
-            @click="goToReset"
-          >
-            Definir nova senha
-          </button>
-        </div>
-
-        <form v-else class="space-y-4" @submit.prevent="handleSubmit">
-          <div
-            v-if="error"
-            role="alert"
-            class="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
-          >
-            {{ error }}
-          </div>
-
-          <div>
-            <label for="email" class="block text-sm font-medium text-stone-700">
-              E-mail da conta
-            </label>
-            <input
-              id="email"
-              v-model="email"
-              type="email"
-              autocomplete="email"
-              required
-              placeholder="seu@email.com"
-              class="mt-1 block w-full rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-900 focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600"
-            />
-          </div>
-
-          <button
-            type="submit"
-            :disabled="loading"
-            class="w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
-          >
-            {{ loading ? 'Verificando...' : 'Continuar' }}
-          </button>
-        </form>
-
-        <div class="mt-6 border-t border-stone-200 pt-4 text-center">
-          <RouterLink to="/login" class="text-sm font-medium text-stone-600 hover:text-brand-600">
-            Voltar para o login
-          </RouterLink>
+        <div
+          v-if="result.resetCode"
+          class="mt-3 rounded-xl border border-fresh-300 bg-surface p-3 dark:border-fresh-800"
+        >
+          <p class="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+            Código de verificação (6 dígitos)
+          </p>
+          <p class="mt-1 font-mono text-2xl font-extrabold tracking-[0.35em] text-brand-600 dark:text-brand-400">
+            {{ result.resetCode }}
+          </p>
         </div>
       </div>
-    </div>
-  </div>
-</template>
 
+      <AppButton variant="primary" size="lg" block @click="goToReset">
+        <span>Definir nova senha</span>
+        <ArrowRight class="h-4 w-4" />
+      </AppButton>
+    </div>
+
+    <form v-else class="space-y-4" @submit.prevent="handleSubmit">
+      <div
+        v-if="error"
+        role="alert"
+        class="rounded-xl border border-red-200 bg-red-50 p-3.5 text-xs font-medium text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
+      >
+        {{ error }}
+      </div>
+
+      <AppInput
+        v-model="email"
+        label="E-mail da conta"
+        type="email"
+        autocomplete="email"
+        required
+        placeholder="seu@email.com"
+      >
+        <template #prefix>
+          <Mail class="h-4 w-4" />
+        </template>
+      </AppInput>
+
+      <AppButton type="submit" variant="primary" size="lg" block :loading="loading">
+        Enviar código de verificação
+      </AppButton>
+    </form>
+
+    <template #footer>
+      Lembrou sua senha?
+      <RouterLink to="/login" class="font-bold text-brand-600 hover:underline dark:text-brand-400">
+        Voltar para o login
+      </RouterLink>
+    </template>
+  </AuthLayout>
+</template>

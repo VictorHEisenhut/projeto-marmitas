@@ -60,12 +60,17 @@ public class AdminController : ControllerBase
     }
 
     [HttpGet("relatorios/assinaturas")]
-    public async Task<IActionResult> GetSubscriptionsReports([FromQuery] Guid? planId = null)
+    public async Task<IActionResult> GetSubscriptionsReports([FromQuery] Guid? planId = null, [FromQuery] Guid? restaurantId = null)
     {
         var subscriptions = await _subscriptions.GetAllSubscriptionsAsync();
         if (planId.HasValue && planId.Value != Guid.Empty)
         {
             subscriptions = subscriptions.Where(s => s.PlanId == planId.Value).ToList();
+        }
+
+        if (restaurantId.HasValue && restaurantId.Value != Guid.Empty)
+        {
+            subscriptions = subscriptions.Where(s => s.RestaurantId == restaurantId.Value || s.PreferredRestaurantId == restaurantId.Value).ToList();
         }
 
         var active = subscriptions.Where(s => s.Status == "Active").ToList();
@@ -131,6 +136,11 @@ public class AdminController : ControllerBase
         if (planId.HasValue && planId.Value != Guid.Empty)
         {
             subscriptions = subscriptions.Where(s => s.PlanId == planId.Value).ToList();
+        }
+
+        if (restaurantId.HasValue && restaurantId.Value != Guid.Empty)
+        {
+            subscriptions = subscriptions.Where(s => s.RestaurantId == restaurantId.Value || s.PreferredRestaurantId == restaurantId.Value).ToList();
         }
 
         var validOrders = orders.Where(o => o.Status != "Cancelled" && o.Status != "Refunded").ToList();

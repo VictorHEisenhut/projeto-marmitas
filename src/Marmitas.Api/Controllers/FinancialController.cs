@@ -17,19 +17,22 @@ public class FinancialController : ControllerBase
     private readonly IDeliveryRepository _deliveries;
     private readonly IRestaurantRepository _restaurants;
     private readonly IFinancialLedgerService _ledger;
+    private readonly ISubscriptionRepository _subscriptions;
 
     public FinancialController(
         ICreateOrderService orders,
         IPaymentRepository payments,
         IDeliveryRepository deliveries,
         IRestaurantRepository restaurants,
-        IFinancialLedgerService ledger)
+        IFinancialLedgerService ledger,
+        ISubscriptionRepository subscriptions)
     {
         _orders = orders;
         _payments = payments;
         _deliveries = deliveries;
         _restaurants = restaurants;
         _ledger = ledger;
+        _subscriptions = subscriptions;
     }
 
     [HttpGet("api/admin/financeiro/comissoes")]
@@ -241,13 +244,28 @@ public class FinancialController : ControllerBase
 
         var restOrders = await _orders.GetByRestaurantIdAsync(id);
         var validOrders = restOrders.Where(o => o.Status != "Cancelled" && o.Status != "Refunded").ToList();
-        var gross = validOrders.Sum(o => o.TotalAmount);
+        var ordersGross = validOrders.Sum(o => o.TotalAmount);
         var ledger = await _payments.GetFinancialTransactionsAsync(id, "Restaurant");
+        var allSubs = await _subscriptions.GetAllSubscriptionsAsync();
+        var activeRestSubs = allSubs.Where(s => s.Status == "Active" && (s.RestaurantId == id || (s.RestaurantId == Guid.Empty && s.PreferredRestaurantId == id))).ToList();
+
+        var subLedgerEntries = ledger
+            .Where(t => t.Category is "SubscriptionRevenue" or "SubscriptionRenewal" or "SubscriptionProrata")
+            .ToList();
+
+        var subscriptionGross = subLedgerEntries.Count > 0
+            ? Math.Round(subLedgerEntries.Sum(t => t.EntryType == "Debit" ? -t.Amount : t.Amount) / 0.90m, 2)
+            : activeRestSubs.Sum(s => s.MonthlyPrice);
+
+        var gross = ordersGross + subscriptionGross;
 
         return Ok(new
         {
             restaurantId = id,
             totalOrders = validOrders.Count,
+            ordersRevenue = ordersGross,
+            subscriptionRevenue = subscriptionGross,
+            activeSubscriptionsCount = activeRestSubs.Count,
             grossRevenue = gross,
             platformCommission = Math.Round(gross * 0.10m, 2),
             netRevenue = Math.Round(gross * 0.90m, 2),

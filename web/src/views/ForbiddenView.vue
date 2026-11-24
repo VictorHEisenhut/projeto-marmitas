@@ -1,31 +1,41 @@
 <script setup lang="ts">
-import Navbar from '@/components/Navbar.vue'
+import { ArrowLeft, ShieldOff } from 'lucide-vue-next'
+import CustomerLayout from '@/layouts/CustomerLayout.vue'
+import AppCard from '@/components/ui/AppCard.vue'
+import AppButton from '@/components/ui/AppButton.vue'
+import AppBadge from '@/components/ui/AppBadge.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
 </script>
 
 <template>
-  <div class="min-h-screen bg-stone-50">
-    <Navbar />
+  <CustomerLayout>
+    <div class="mx-auto flex max-w-lg flex-col items-center justify-center px-4 py-20 text-center">
+      <AppCard padding="lg" class="w-full space-y-5">
+        <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-red-50 text-red-600 dark:bg-red-950/60 dark:text-red-400">
+          <ShieldOff class="h-8 w-8" />
+        </div>
 
-    <main class="mx-auto max-w-lg px-4 py-16 text-center">
-      <div class="rounded-xl border border-stone-200 bg-white p-8 shadow-sm">
-        <h1 class="text-2xl font-bold text-stone-900">Acesso negado</h1>
-        <p class="mt-2 text-sm text-stone-600">
-          Sua conta não possui permissão para visualizar esta página.
-        </p>
+        <div class="space-y-2">
+          <AppBadge variant="danger" size="sm">Erro 403 · Acesso Restrito</AppBadge>
+          <h1 class="font-display text-2xl font-extrabold text-ink">
+            Você não tem permissão para esta página
+          </h1>
+          <p class="text-sm leading-relaxed text-ink-secondary">
+            Sua conta atual não possui o perfil RBAC necessário para acessar esta área operacional.
+          </p>
+        </div>
 
-        <div class="mt-6">
-          <RouterLink
-            :to="auth.isAuthenticated ? auth.defaultRoute : '/'"
-            class="inline-block rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-700"
-          >
-            Voltar para o início
+        <div class="pt-2">
+          <RouterLink :to="auth.isAuthenticated ? auth.defaultRoute : '/'">
+            <AppButton variant="primary" size="lg" block>
+              <ArrowLeft class="h-4 w-4" />
+              Voltar para minha área inicial
+            </AppButton>
           </RouterLink>
         </div>
-      </div>
-    </main>
-  </div>
+      </AppCard>
+    </div>
+  </CustomerLayout>
 </template>
-

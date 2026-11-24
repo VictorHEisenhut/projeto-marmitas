@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Marmitas.Application.Common.Interfaces;
 using Marmitas.Application.Platform.Dtos;
 using Marmitas.Domain.Entities;
@@ -11,19 +12,37 @@ namespace Marmitas.Api.Controllers;
 public class PlansController : ControllerBase
 {
     private readonly ISubscriptionRepository _subscriptions;
+    private readonly IRestaurantRepository _restaurants;
 
-    public PlansController(ISubscriptionRepository subscriptions)
+    public PlansController(ISubscriptionRepository subscriptions, IRestaurantRepository restaurants)
     {
         _subscriptions = subscriptions;
+        _restaurants = restaurants;
     }
 
     [HttpGet]
     [AllowAnonymous]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll([FromQuery] Guid? restaurantId = null)
     {
-        var plans = await _subscriptions.GetActivePlansAsync();
+        var plans = await _subscriptions.GetActivePlansAsync(restaurantId);
+        if (plans.Any(p => string.IsNullOrWhiteSpace(p.RestaurantName) && p.RestaurantId != Guid.Empty))
+        {
+            var restaurants = await _restaurants.GetAllAsync();
+            var namesById = restaurants.ToDictionary(r => r.Id, r => r.Name);
+            foreach (var p in plans)
+            {
+                if (string.IsNullOrWhiteSpace(p.RestaurantName) && namesById.TryGetValue(p.RestaurantId, out var name))
+                {
+                    p.RestaurantName = name;
+                }
+            }
+        }
         return Ok(plans);
     }
+
+    [HttpGet("/api/restaurantes/{restaurantId:guid}/planos")]
+    [AllowAnonymous]
+    public Task<IActionResult> GetByRestaurant(Guid restaurantId) => GetAll(restaurantId);
 
     [HttpGet("{id}")]
     [AllowAnonymous]
@@ -33,15 +52,33 @@ public class PlansController : ControllerBase
         if (plan == null)
             throw new Exception("Plano não encontrado.");
 
+        if (string.IsNullOrWhiteSpace(plan.RestaurantName) && plan.RestaurantId != Guid.Empty)
+        {
+            var restaurant = await _restaurants.GetByIdAsync(plan.RestaurantId);
+            if (restaurant != null)
+                plan.RestaurantName = restaurant.Name;
+        }
+
         return Ok(plan);
     }
 
     [HttpPost]
-    [Authorize(Roles = "admin,super_admin")]
+    [Authorize(Roles = "restaurant_owner,restaurant_staff,admin,super_admin")]
     public async Task<IActionResult> Create([FromBody] SavePlanRequest request)
     {
+        if (request.RestaurantId == Guid.Empty)
+            throw new Exception("O restaurante do plano é obrigatório.");
         if (string.IsNullOrWhiteSpace(request.Name))
             throw new Exception("O nome do plano é obrigatório.");
+        if (request.MonthlyPrice <= 0)
+            throw new Exception("O valor mensal do plano deve ser maior que zero.");
+
+        var restaurant = await _restaurants.GetByIdAsync(request.RestaurantId);
+        if (restaurant == null)
+            throw new Exception("Restaurante informado não encontrado.");
+
+        if (!IsAdmin() && !await _restaurants.IsUserAuthorizedAsync(request.RestaurantId, GetUserId()))
+            return Forbid();
 
         var mealsPerWeek = request.MealsPerWeek > 0 ? request.MealsPerWeek : 5;
         var mealsPerMonth = request.MealsPerMonth.HasValue && request.MealsPerMonth.Value > 0
@@ -50,6 +87,8 @@ public class PlansController : ControllerBase
 
         var plan = new Plan
         {
+            RestaurantId = restaurant.Id,
+            RestaurantName = restaurant.Name,
             Name = request.Name.Trim(),
             Description = request.Description ?? string.Empty,
             MealsPerWeek = mealsPerWeek,
@@ -72,19 +111,42 @@ public class PlansController : ControllerBase
     }
 
     [HttpPut("{id}")]
-    [Authorize(Roles = "admin,super_admin")]
+    [Authorize(Roles = "restaurant_owner,restaurant_staff,admin,super_admin")]
     public async Task<IActionResult> Update(Guid id, [FromBody] SavePlanRequest request)
     {
         var plan = await _subscriptions.GetPlanByIdAsync(id);
         if (plan == null)
             throw new Exception("Plano não encontrado.");
 
+        if (!IsAdmin() && !await _restaurants.IsUserAuthorizedAsync(plan.RestaurantId, GetUserId()))
+            return Forbid();
+
+        if (request.RestaurantId != Guid.Empty && request.RestaurantId != plan.RestaurantId)
+        {
+            if (!IsAdmin())
+                return Forbid();
+
+            var newRestaurant = await _restaurants.GetByIdAsync(request.RestaurantId);
+            if (newRestaurant == null)
+                throw new Exception("Restaurante informado não encontrado.");
+
+            plan.RestaurantId = newRestaurant.Id;
+            plan.RestaurantName = newRestaurant.Name;
+        }
+        else if (string.IsNullOrWhiteSpace(plan.RestaurantName) && plan.RestaurantId != Guid.Empty)
+        {
+            var restaurant = await _restaurants.GetByIdAsync(plan.RestaurantId);
+            if (restaurant != null)
+                plan.RestaurantName = restaurant.Name;
+        }
+
         if (!string.IsNullOrWhiteSpace(request.Name))
             plan.Name = request.Name.Trim();
         plan.Description = request.Description ?? string.Empty;
         plan.MealsPerWeek = request.MealsPerWeek > 0 ? request.MealsPerWeek : plan.MealsPerWeek;
         plan.MealsPerMonth = request.MealsPerMonth ?? (plan.MealsPerWeek * 4);
-        plan.MonthlyPrice = request.MonthlyPrice;
+        if (request.MonthlyPrice > 0)
+            plan.MonthlyPrice = request.MonthlyPrice;
 
         if (!string.IsNullOrWhiteSpace(request.Frequency))
             plan.Frequency = request.Frequency.Trim();
@@ -102,15 +164,26 @@ public class PlansController : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    [Authorize(Roles = "admin,super_admin")]
+    [Authorize(Roles = "restaurant_owner,restaurant_staff,admin,super_admin")]
     public async Task<IActionResult> Delete(Guid id)
     {
         var plan = await _subscriptions.GetPlanByIdAsync(id);
         if (plan == null)
             throw new Exception("Plano não encontrado.");
 
+        if (!IsAdmin() && !await _restaurants.IsUserAuthorizedAsync(plan.RestaurantId, GetUserId()))
+            return Forbid();
+
         plan.IsActive = false;
         await _subscriptions.SaveChangesAsync();
         return NoContent();
     }
+
+    private Guid GetUserId()
+    {
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        return Guid.TryParse(sub, out var id) ? id : Guid.Empty;
+    }
+
+    private bool IsAdmin() => User.IsInRole("admin") || User.IsInRole("super_admin");
 }

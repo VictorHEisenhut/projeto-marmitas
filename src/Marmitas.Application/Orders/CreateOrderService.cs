@@ -76,10 +76,12 @@ public class CreateOrderService : ICreateOrderService
         {
             var userSubs = await _subscriptionRepository.GetSubscriptionsByUserAsync(customerId);
             activeSub = userSubs.FirstOrDefault(s =>
-                string.Equals(s.Status, "Active", StringComparison.OrdinalIgnoreCase));
+                string.Equals(s.Status, "Active", StringComparison.OrdinalIgnoreCase) &&
+                (s.RestaurantId == request.RestaurantId ||
+                 (s.RestaurantId == Guid.Empty && s.PreferredRestaurantId == request.RestaurantId)));
 
             if (activeSub == null)
-                throw new Exception("Você não possui um plano de assinatura ativo para resgatar marmitas.");
+                throw new Exception($"Você não possui um plano de assinatura ativo no restaurante '{restaurant.Name}' para resgatar marmitas.");
 
             var plan = await _subscriptionRepository.GetPlanByIdAsync(activeSub.PlanId);
             var weeklyLimit = plan?.MealsPerWeek ?? 5;
@@ -87,7 +89,9 @@ public class CreateOrderService : ICreateOrderService
             var myOrders = await _orderRepository.GetByCustomerIdAsync(customerId);
             var weekCutoff = DateTime.UtcNow.AddDays(-7);
             var usedMealsThisWeek = myOrders
-                .Where(o => o.Status != OrderStatus.Cancelled && o.CreatedAt >= weekCutoff)
+                .Where(o => o.Status != OrderStatus.Cancelled
+                            && o.CreatedAt >= weekCutoff
+                            && (o.SubscriptionId == activeSub.Id || o.RestaurantId == request.RestaurantId))
                 .SelectMany(o => o.Items)
                 .Where(i => i.ProductName.StartsWith("[PLANO]", StringComparison.OrdinalIgnoreCase))
                 .Sum(i => i.Quantity);

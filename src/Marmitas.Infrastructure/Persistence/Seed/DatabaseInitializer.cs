@@ -113,6 +113,8 @@ public static class DatabaseInitializer
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
 
+            ALTER TABLE plans ADD COLUMN IF NOT EXISTS restaurant_id UUID;
+            ALTER TABLE plans ADD COLUMN IF NOT EXISTS restaurant_name VARCHAR(150) NOT NULL DEFAULT '';
             ALTER TABLE plans ADD COLUMN IF NOT EXISTS meals_per_month INT NOT NULL DEFAULT 20;
             ALTER TABLE plans ADD COLUMN IF NOT EXISTS frequency VARCHAR(30) NOT NULL DEFAULT 'Monthly';
             ALTER TABLE plans ADD COLUMN IF NOT EXISTS allowed_days VARCHAR(100) NOT NULL DEFAULT 'Segunda a Sexta';
@@ -120,6 +122,21 @@ public static class DatabaseInitializer
             ALTER TABLE plans ADD COLUMN IF NOT EXISTS delivery_fee NUMERIC(10,2) NOT NULL DEFAULT 0.00;
             ALTER TABLE plans ADD COLUMN IF NOT EXISTS cancellation_policy VARCHAR(300) NOT NULL DEFAULT 'Cancelamento livre até o fim do ciclo vigente.';
 
+            UPDATE plans
+            SET restaurant_id = COALESCE((SELECT id FROM restaurants ORDER BY created_at LIMIT 1), 'aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa'),
+                restaurant_name = COALESCE((SELECT name FROM restaurants ORDER BY created_at LIMIT 1), 'Sabores da Vila Gastronomia')
+            WHERE restaurant_id IS NULL OR restaurant_id = '00000000-0000-0000-0000-000000000000';
+
+            UPDATE plans p
+            SET restaurant_name = r.name
+            FROM restaurants r
+            WHERE p.restaurant_id = r.id AND (p.restaurant_name IS NULL OR p.restaurant_name = '');
+
+            ALTER TABLE plans ALTER COLUMN restaurant_id SET DEFAULT '00000000-0000-0000-0000-000000000000';
+            ALTER TABLE plans ALTER COLUMN restaurant_id SET NOT NULL;
+
+            ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS restaurant_id UUID;
+            ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS restaurant_name VARCHAR(150) NOT NULL DEFAULT '';
             ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS total_meals_in_cycle INT NOT NULL DEFAULT 20;
             ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS used_meals_in_cycle INT NOT NULL DEFAULT 0;
             ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS preferred_restaurant_id UUID;
@@ -127,6 +144,28 @@ public static class DatabaseInitializer
             ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS failed_payment_attempts INT NOT NULL DEFAULT 0;
             ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS grace_period_ends_at TIMESTAMPTZ;
             ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+
+            UPDATE subscriptions s
+            SET restaurant_id = COALESCE(p.restaurant_id, s.preferred_restaurant_id, (SELECT id FROM restaurants ORDER BY created_at LIMIT 1), '00000000-0000-0000-0000-000000000000'),
+                restaurant_name = COALESCE(NULLIF(p.restaurant_name, ''), ''),
+                preferred_restaurant_id = COALESCE(s.preferred_restaurant_id, p.restaurant_id)
+            FROM plans p
+            WHERE s.plan_id = p.id AND (s.restaurant_id IS NULL OR s.restaurant_id = '00000000-0000-0000-0000-000000000000');
+
+            UPDATE subscriptions
+            SET restaurant_id = COALESCE(preferred_restaurant_id, (SELECT id FROM restaurants ORDER BY created_at LIMIT 1), '00000000-0000-0000-0000-000000000000')
+            WHERE restaurant_id IS NULL;
+
+            UPDATE subscriptions s
+            SET restaurant_name = r.name
+            FROM restaurants r
+            WHERE s.restaurant_id = r.id AND (s.restaurant_name IS NULL OR s.restaurant_name = '');
+
+            ALTER TABLE subscriptions ALTER COLUMN restaurant_id SET DEFAULT '00000000-0000-0000-0000-000000000000';
+            ALTER TABLE subscriptions ALTER COLUMN restaurant_id SET NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS ix_plans_restaurant_id ON plans (restaurant_id);
+            CREATE INDEX IF NOT EXISTS ix_subscriptions_restaurant_id ON subscriptions (restaurant_id);
 
             CREATE TABLE IF NOT EXISTS subscription_items (
                 id UUID PRIMARY KEY,
@@ -389,6 +428,36 @@ public static class DatabaseInitializer
             SELECT '99999999-1111-1111-1111-999999999991', '44444444-4444-4444-4444-444444444444', 'aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa', 29.90, 0.00, 29.90, 'Delivered', 'Solicitei a farofa extra separada e veio junto na marmita.', NOW() - INTERVAL '4 hours', NOW() - INTERVAL '1 day', NOW() - INTERVAL '4 hours'
             WHERE EXISTS (SELECT 1 FROM users WHERE id = '44444444-4444-4444-4444-444444444444')
               AND EXISTS (SELECT 1 FROM restaurants WHERE id = 'aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa')
+            ON CONFLICT (id) DO NOTHING;
+
+            INSERT INTO plans (id, restaurant_id, restaurant_name, name, description, meals_per_week, meals_per_month, monthly_price, frequency, allowed_days, delivery_window, delivery_fee, cancellation_policy, is_active, created_at, updated_at)
+            SELECT 'a1111111-1111-1111-1111-111111111101', 'aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa', 'Sabores da Vila Gastronomia', 'Caseiro 5x Semana', '5 marmitas tradicionais da semana com tempero caseiro e entrega gratuita.', 5, 20, 289.90, 'Monthly', 'Segunda a Sexta', '11:00 às 14:00', 0.00, 'Cancelamento livre até o fim do ciclo vigente.', TRUE, NOW(), NOW()
+            WHERE EXISTS (SELECT 1 FROM restaurants WHERE id = 'aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa')
+              AND NOT EXISTS (SELECT 1 FROM plans WHERE restaurant_id = 'aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa' AND is_active = TRUE)
+            ON CONFLICT (id) DO NOTHING;
+
+            INSERT INTO plans (id, restaurant_id, restaurant_name, name, description, meals_per_week, meals_per_month, monthly_price, frequency, allowed_days, delivery_window, delivery_fee, cancellation_policy, is_active, created_at, updated_at)
+            SELECT 'a1111111-1111-1111-1111-111111111102', 'aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa', 'Sabores da Vila Gastronomia', 'Caseiro Completo 10x', 'Almoço e jantar de segunda a sexta com pratos executivos e tradicionais.', 10, 40, 529.90, 'Monthly', 'Segunda a Sexta', '11:00 às 20:00', 0.00, 'Cancelamento livre até o fim do ciclo vigente.', TRUE, NOW(), NOW()
+            WHERE EXISTS (SELECT 1 FROM restaurants WHERE id = 'aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa')
+              AND (SELECT COUNT(*) FROM plans WHERE restaurant_id = 'aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa' AND is_active = TRUE) < 2
+            ON CONFLICT (id) DO NOTHING;
+
+            INSERT INTO plans (id, restaurant_id, restaurant_name, name, description, meals_per_week, meals_per_month, monthly_price, frequency, allowed_days, delivery_window, delivery_fee, cancellation_policy, is_active, created_at, updated_at)
+            SELECT 'b2222222-2222-2222-2222-222222222201', 'bbbbbbbb-2222-2222-2222-bbbbbbbbbbbb', 'FitLife Marmitaria & Nutrição', 'Fit Low Carb 5x', 'Marmitas balanceadas low carb com proteínas magras de segunda a sexta.', 5, 20, 319.90, 'Monthly', 'Segunda a Sexta', '11:00 às 14:30', 0.00, 'Cancelamento livre até o fim do ciclo vigente.', TRUE, NOW(), NOW()
+            WHERE EXISTS (SELECT 1 FROM restaurants WHERE id = 'bbbbbbbb-2222-2222-2222-bbbbbbbbbbbb')
+              AND NOT EXISTS (SELECT 1 FROM plans WHERE restaurant_id = 'bbbbbbbb-2222-2222-2222-bbbbbbbbbbbb' AND is_active = TRUE)
+            ON CONFLICT (id) DO NOTHING;
+
+            INSERT INTO plans (id, restaurant_id, restaurant_name, name, description, meals_per_week, meals_per_month, monthly_price, frequency, allowed_days, delivery_window, delivery_fee, cancellation_policy, is_active, created_at, updated_at)
+            SELECT 'b2222222-2222-2222-2222-222222222202', 'bbbbbbbb-2222-2222-2222-bbbbbbbbbbbb', 'FitLife Marmitaria & Nutrição', 'Atleta 10x Semana', 'Plano de alta proteína para almoço e jantar durante toda a semana.', 10, 40, 579.90, 'Monthly', 'Segunda a Sábado', '10:30 às 20:30', 0.00, 'Cancelamento livre até o fim do ciclo vigente.', TRUE, NOW(), NOW()
+            WHERE EXISTS (SELECT 1 FROM restaurants WHERE id = 'bbbbbbbb-2222-2222-2222-bbbbbbbbbbbb')
+              AND (SELECT COUNT(*) FROM plans WHERE restaurant_id = 'bbbbbbbb-2222-2222-2222-bbbbbbbbbbbb' AND is_active = TRUE) < 2
+            ON CONFLICT (id) DO NOTHING;
+
+            INSERT INTO plans (id, restaurant_id, restaurant_name, name, description, meals_per_week, meals_per_month, monthly_price, frequency, allowed_days, delivery_window, delivery_fee, cancellation_policy, is_active, created_at, updated_at)
+            SELECT 'c3333333-3333-3333-3333-333333333301', 'cccccccc-3333-3333-3333-cccccccccccc', 'Cantina & Bistrô Paulista', 'Executivo Semanal 5x', 'Pratos executivos selecionados da cantina entregues no horário comercial.', 5, 20, 349.90, 'Monthly', 'Segunda a Sexta', '11:30 às 14:30', 0.00, 'Cancelamento livre até o fim do ciclo vigente.', TRUE, NOW(), NOW()
+            WHERE EXISTS (SELECT 1 FROM restaurants WHERE id = 'cccccccc-3333-3333-3333-cccccccccccc')
+              AND NOT EXISTS (SELECT 1 FROM plans WHERE restaurant_id = 'cccccccc-3333-3333-3333-cccccccccccc' AND is_active = TRUE)
             ON CONFLICT (id) DO NOTHING;
         ");
     }

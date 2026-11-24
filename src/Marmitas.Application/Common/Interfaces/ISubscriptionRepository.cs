@@ -4,7 +4,7 @@ namespace Marmitas.Application.Common.Interfaces;
 
 public interface ISubscriptionRepository
 {
-    Task<List<Plan>> GetActivePlansAsync();
+    Task<List<Plan>> GetActivePlansAsync(Guid? restaurantId = null);
     Task<Plan?> GetPlanByIdAsync(Guid id);
     Task AddPlanAsync(Plan plan);
 

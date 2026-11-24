@@ -1,4 +1,6 @@
+using System.Security.Claims;
 using System.Text.Json;
+using Marmitas.Application.Common.Interfaces;
 using Marmitas.Domain.ValueObjects;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -20,10 +22,23 @@ public class GeolocationController : ControllerBase
     };
 
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IRestaurantRepository _restaurants;
+    private readonly ICustomerProfileRepository _profiles;
+    private readonly IDeliveryRepository _deliveries;
+    private readonly IOrderRepository _orders;
 
-    public GeolocationController(IHttpClientFactory httpClientFactory)
+    public GeolocationController(
+        IHttpClientFactory httpClientFactory,
+        IRestaurantRepository restaurants,
+        ICustomerProfileRepository profiles,
+        IDeliveryRepository deliveries,
+        IOrderRepository orders)
     {
         _httpClientFactory = httpClientFactory;
+        _restaurants = restaurants;
+        _profiles = profiles;
+        _deliveries = deliveries;
+        _orders = orders;
     }
 
     [HttpGet("cep/{cep}")]
@@ -102,6 +117,89 @@ public class GeolocationController : ControllerBase
             distanceKm,
             deliveryFee = fee,
             estimatedMinutes
+        });
+    }
+
+    [HttpGet("estimativa-entrega")]
+    [Authorize]
+    public async Task<IActionResult> EstimateDeliveryForCart(
+        [FromQuery] Guid restaurantId,
+        [FromQuery] Guid? addressId = null)
+    {
+        var restaurant = await _restaurants.GetByIdAsync(restaurantId);
+        if (restaurant == null)
+            throw new Exception("Restaurante não encontrado.");
+
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        var userId = Guid.TryParse(sub, out var parsed) ? parsed : Guid.Empty;
+
+        var addresses = userId != Guid.Empty
+            ? await _profiles.GetAddressesByUserAsync(userId)
+            : new List<Domain.Entities.Address>();
+
+        var selectedAddress = addressId.HasValue
+            ? addresses.FirstOrDefault(a => a.Id == addressId.Value)
+            : addresses.FirstOrDefault(a => a.IsMain) ?? addresses.FirstOrDefault();
+
+        var restaurantAddress = !string.IsNullOrWhiteSpace(restaurant.AddressStreet)
+            ? $"{restaurant.AddressStreet}, {restaurant.AddressNumber} - {restaurant.AddressNeighborhood}, {restaurant.AddressCity}/{restaurant.AddressState}"
+            : restaurant.Name;
+
+        var customerAddress = selectedAddress != null
+            ? $"{selectedAddress.Street}, {selectedAddress.Number} - {selectedAddress.Neighborhood}, {selectedAddress.City}/{selectedAddress.State}"
+            : "Centro, São Paulo/SP";
+
+        var restaurantPoint = GeoCalculator.ResolveAddressCoordinates(
+            restaurant.Latitude,
+            restaurant.Longitude,
+            restaurantAddress,
+            restaurant.Name);
+
+        var customerPoint = GeoCalculator.ResolveAddressCoordinates(
+            selectedAddress?.Latitude,
+            selectedAddress?.Longitude,
+            customerAddress,
+            "Casa do cliente");
+
+        // Considera entregas ativas em andamento do mesmo restaurante como possíveis paradas simultâneas na fila de rota
+        var activeRestaurantOrders = (await _orders.GetByRestaurantIdAsync(restaurantId))
+            .Where(o => o.Status is Domain.Enums.OrderStatus.ReadyForPickup
+                or Domain.Enums.OrderStatus.DriverAssigned
+                or Domain.Enums.OrderStatus.PickedUp
+                or Domain.Enums.OrderStatus.InTransit)
+            .OrderBy(o => o.CreatedAt)
+            .Take(2)
+            .ToList();
+
+        var activeStops = activeRestaurantOrders
+            .Select((o, idx) => GeoCalculator.ResolveAddressCoordinates(
+                null,
+                null,
+                o.DeliveryAddress,
+                $"Parada {idx + 1}"))
+            .ToList();
+
+        var eta = GeoCalculator.EstimateDeliveryEta(
+            restaurantPoint,
+            customerPoint,
+            "Created",
+            null,
+            activeStops);
+
+        return Ok(new
+        {
+            restaurantId,
+            restaurantName = restaurant.Name,
+            restaurantAddress,
+            customerAddress,
+            estimatedMinutes = eta.EstimatedMinutes,
+            estimatedArrivalAt = eta.EstimatedArrivalAt,
+            totalDistanceKm = eta.TotalDistanceKm,
+            stopsAhead = eta.StopsAhead,
+            preparationMinutes = eta.PreparationMinutes,
+            travelMinutes = eta.TravelMinutes,
+            stopsDelayMinutes = eta.StopsDelayMinutes,
+            routeSummary = eta.RouteSummary
         });
     }
 }

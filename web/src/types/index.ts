@@ -111,6 +111,8 @@ export interface Product {
 
 export interface Plan {
   id: string
+  restaurantId: string
+  restaurantName?: string
   name: string
   description: string
   mealsPerWeek: number
@@ -129,6 +131,8 @@ export interface Subscription {
   userId: string
   planId: string
   planName: string
+  restaurantId: string
+  restaurantName?: string
   monthlyPrice: number
   status: string
   startDate: string
@@ -263,6 +267,9 @@ export interface CouponValidationResponse {
 export interface RestaurantFinancials {
   restaurantId: string
   totalOrders: number
+  ordersRevenue?: number
+  subscriptionRevenue?: number
+  activeSubscriptionsCount?: number
   grossRevenue: number
   platformCommission: number
   netRevenue: number
@@ -293,6 +300,10 @@ export interface Delivery {
   status: string
   deliveryFee?: number
   distanceKm?: number
+  estimatedMinutes?: number
+  estimatedArrivalAt?: string
+  stopsAhead?: number
+  routeSummary?: string
   confirmationPin?: string
   createdAt?: string
   updatedAt?: string
@@ -414,6 +425,12 @@ export interface NotificationPreferences {
   smsEnabled: boolean
 }
 
+export interface RouteStopItem {
+  type: 'Restaurant' | 'IntermediateStop' | 'Destination' | string
+  label: string
+  address: string
+}
+
 export interface DeliveryTracking {
   deliveryId: string
   orderId: string
@@ -421,7 +438,33 @@ export interface DeliveryTracking {
   courierName?: string | null
   latitude?: number | null
   longitude?: number | null
+  estimatedMinutes?: number
+  estimatedArrivalAt?: string
+  totalDistanceKm?: number
+  stopsAhead?: number
+  preparationMinutes?: number
+  travelMinutes?: number
+  stopsDelayMinutes?: number
+  routeSummary?: string
+  restaurantAddress?: string
+  customerAddress?: string
+  routeStops?: RouteStopItem[]
   updatedAt: string
+}
+
+export interface CartDeliveryEstimate {
+  restaurantId: string
+  restaurantName: string
+  restaurantAddress: string
+  customerAddress: string
+  estimatedMinutes: number
+  estimatedArrivalAt: string
+  totalDistanceKm: number
+  stopsAhead: number
+  preparationMinutes: number
+  travelMinutes: number
+  stopsDelayMinutes: number
+  routeSummary: string
 }
 
 export interface NutritionalEstimate {
@@ -473,4 +516,33 @@ export interface AiStatusResponse {
   isConfigured: boolean
   model: string
   provider: string
+}
+
+export interface PaymentResponse {
+  id: string
+  orderId: string
+  amount: number
+  method: string
+  gateway?: string
+  externalTransactionId?: string | null
+  pixQrCode?: string | null
+  pixCopyPaste?: string | null
+  status: string
+  paidAt?: string | null
+}
+
+export interface UserConsent {
+  id: string
+  userId: string
+  purpose: string
+  termsVersion: string
+  isGranted: boolean
+  ipAddress?: string | null
+  consentedAt: string
+}
+
+export interface MfaEnableResponse {
+  mfaEnabled: boolean
+  verificationCode?: string
+  message: string
 }

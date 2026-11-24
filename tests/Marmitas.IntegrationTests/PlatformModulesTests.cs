@@ -202,4 +202,154 @@ public class PlatformModulesTests : IClassFixture<WebApplicationFactory<Program>
         Assert.NotNull(url);
         Assert.StartsWith("/uploads/", url);
     }
+
+    [Fact]
+    public async Task PlanosIndividuaisPorRestaurante_DonoCriaClienteAssinaEResgataApenasNoMesmoRestaurante()
+    {
+        var ownerAClient = _factory.CreateClient();
+        var ownerBClient = _factory.CreateClient();
+        var customerClient = _factory.CreateClient();
+
+        async Task<(Guid UserId, string Token)> CriarUsuarioAsync(HttpClient c, string email, string role)
+        {
+            const string pwd = "SenhaForte123";
+            await c.PostAsJsonAsync("/api/v1/auth/registro", new RegisterRequest
+            {
+                Name = $"Usuario {role}",
+                Email = email,
+                Password = pwd,
+                Role = role
+            });
+
+            var loginRes = await c.PostAsJsonAsync("/api/v1/auth/login", new LoginRequest
+            {
+                Email = email,
+                Password = pwd
+            });
+            loginRes.EnsureSuccessStatusCode();
+            var loginJson = await loginRes.Content.ReadFromJsonAsync<JsonElement>();
+            return (
+                loginJson.GetProperty("user").GetProperty("id").GetGuid(),
+                loginJson.GetProperty("accessToken").GetString()!
+            );
+        }
+
+        var (ownerAId, ownerAToken) = await CriarUsuarioAsync(ownerAClient, $"ownerA_{Guid.NewGuid()}@test.com", "restaurant_owner");
+        var (ownerBId, ownerBToken) = await CriarUsuarioAsync(ownerBClient, $"ownerB_{Guid.NewGuid()}@test.com", "restaurant_owner");
+        var (_, customerToken) = await CriarUsuarioAsync(customerClient, $"cli_{Guid.NewGuid()}@test.com", "customer");
+
+        ownerAClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ownerAToken);
+        ownerBClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ownerBToken);
+        customerClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", customerToken);
+
+        Guid restAId;
+        Guid prodAId;
+        Guid restBId;
+        Guid prodBId;
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var restA = new Restaurant("Marmitaria Alpha", "Caseira", "11111111000111", ownerAId);
+            restA.Approve();
+            var restB = new Restaurant("Marmitaria Beta", "Fitness", "22222222000122", ownerBId);
+            restB.Approve();
+            context.Restaurants.AddRange(restA, restB);
+
+            var catA = new ProductCategory(restA.Id, "Tradicionais", 1);
+            var catB = new ProductCategory(restB.Id, "Fitness", 1);
+            context.ProductCategories.AddRange(catA, catB);
+
+            var prodA = new Product(restA.Id, catA.Id, "Frango Grelhado Alpha", "Com arroz integral", 29.90m, null);
+            var prodB = new Product(restB.Id, catB.Id, "Salmao Fit Beta", "Com legumes", 39.90m, null);
+            context.Products.AddRange(prodA, prodB);
+
+            await context.SaveChangesAsync();
+            restAId = restA.Id;
+            prodAId = prodA.Id;
+            restBId = restB.Id;
+            prodBId = prodB.Id;
+        }
+
+        // Dono A cria plano no Restaurante A
+        var createPlanARes = await ownerAClient.PostAsJsonAsync("/api/planos", new
+        {
+            restaurantId = restAId,
+            name = "Plano Alpha 5x",
+            description = "Almoço semanal Alpha",
+            mealsPerWeek = 5,
+            monthlyPrice = 249.90m
+        });
+        Assert.Equal(HttpStatusCode.Created, createPlanARes.StatusCode);
+        var planAJson = await createPlanARes.Content.ReadFromJsonAsync<JsonElement>();
+        var planAId = planAJson.GetProperty("id").GetGuid();
+        Assert.Equal(restAId, planAJson.GetProperty("restaurantId").GetGuid());
+        Assert.Equal("Marmitaria Alpha", planAJson.GetProperty("restaurantName").GetString());
+
+        // Dono B nao pode editar nem desativar o plano do Restaurante A
+        var forbidUpdate = await ownerBClient.PutAsJsonAsync($"/api/planos/{planAId}", new
+        {
+            restaurantId = restAId,
+            name = "Plano Invadido",
+            mealsPerWeek = 5,
+            monthlyPrice = 99m
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, forbidUpdate.StatusCode);
+
+        var forbidDelete = await ownerBClient.DeleteAsync($"/api/planos/{planAId}");
+        Assert.Equal(HttpStatusCode.Forbidden, forbidDelete.StatusCode);
+
+        // Dono B cria plano proprio no Restaurante B
+        var createPlanBRes = await ownerBClient.PostAsJsonAsync("/api/planos", new
+        {
+            restaurantId = restBId,
+            name = "Plano Beta 5x",
+            description = "Almoço semanal Beta",
+            mealsPerWeek = 5,
+            monthlyPrice = 329.90m
+        });
+        Assert.Equal(HttpStatusCode.Created, createPlanBRes.StatusCode);
+        var planBJson = await createPlanBRes.Content.ReadFromJsonAsync<JsonElement>();
+        var planBId = planBJson.GetProperty("id").GetGuid();
+
+        // Filtro por restaurante na vitrine
+        var plansARes = await customerClient.GetFromJsonAsync<JsonElement>($"/api/planos?restaurantId={restAId}");
+        var planAIds = plansARes.EnumerateArray().Select(p => p.GetProperty("id").GetGuid()).ToList();
+        Assert.Contains(planAId, planAIds);
+        Assert.DoesNotContain(planBId, planAIds);
+
+        // Cliente assina o plano do Restaurante A
+        var subscribeARes = await customerClient.PostAsJsonAsync("/api/assinaturas", new { planId = planAId });
+        Assert.Equal(HttpStatusCode.Created, subscribeARes.StatusCode);
+        var subAJson = await subscribeARes.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(restAId, subAJson.GetProperty("restaurantId").GetGuid());
+
+        // Segundo plano no mesmo restaurante A deve ser bloqueado
+        var duplicateSubARes = await customerClient.PostAsJsonAsync("/api/assinaturas", new { planId = planAId });
+        Assert.Equal(HttpStatusCode.BadRequest, duplicateSubARes.StatusCode);
+
+        // Cliente tenta resgatar pelo plano no Restaurante B -> deve falhar
+        var redeemWrongRes = await customerClient.PostAsJsonAsync("/api/v1/pedidos", new CreateOrderRequest
+        {
+            RestaurantId = restBId,
+            IsPlanRedemption = true,
+            Items = new List<OrderItemRequest> { new() { ProductId = prodBId, Quantity = 1 } }
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, redeemWrongRes.StatusCode);
+
+        // Cliente resgata pelo plano no Restaurante A -> deve funcionar com valor base zero
+        var redeemRightRes = await customerClient.PostAsJsonAsync("/api/v1/pedidos", new CreateOrderRequest
+        {
+            RestaurantId = restAId,
+            IsPlanRedemption = true,
+            Items = new List<OrderItemRequest> { new() { ProductId = prodAId, Quantity = 1 } }
+        });
+        Assert.Equal(HttpStatusCode.Created, redeemRightRes.StatusCode);
+        var orderRightJson = await redeemRightRes.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(0m, orderRightJson.GetProperty("totalAmount").GetDecimal());
+
+        // Cliente consegue assinar simultaneamente um plano do Restaurante B
+        var subscribeBRes = await customerClient.PostAsJsonAsync("/api/assinaturas", new { planId = planBId });
+        Assert.Equal(HttpStatusCode.Created, subscribeBRes.StatusCode);
+    }
 }

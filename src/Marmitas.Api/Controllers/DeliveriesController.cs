@@ -5,6 +5,7 @@ using Marmitas.Application.Financial;
 using Marmitas.Application.Orders;
 using Marmitas.Application.Platform.Dtos;
 using Marmitas.Domain.Entities;
+using Marmitas.Domain.ValueObjects;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -113,6 +114,8 @@ public class DeliveriesController : ControllerBase
             var restaurantAddress = string.Empty;
             var deliveryNeighborhood = "Centro";
             var deliveryAddress = "Região Central - São Paulo/SP";
+            Restaurant? rest = null;
+            Address? mainAddr = null;
 
             if (ordersById.TryGetValue(d.OrderId, out var order))
             {
@@ -121,7 +124,7 @@ public class DeliveriesController : ControllerBase
                     restaurantName = order.RestaurantName;
                 }
 
-                if (!restaurantCache.TryGetValue(order.RestaurantId, out var rest))
+                if (!restaurantCache.TryGetValue(order.RestaurantId, out rest))
                 {
                     rest = await _restaurants.GetByIdAsync(order.RestaurantId);
                     restaurantCache[order.RestaurantId] = rest;
@@ -142,7 +145,7 @@ public class DeliveriesController : ControllerBase
                     customerAddressCache[order.CustomerId] = addrs;
                 }
 
-                var mainAddr = addrs.FirstOrDefault(a => a.IsMain) ?? addrs.FirstOrDefault();
+                mainAddr = addrs.FirstOrDefault(a => a.IsMain) ?? addrs.FirstOrDefault();
                 if (!string.IsNullOrWhiteSpace(order.DeliveryAddress))
                 {
                     deliveryAddress = order.DeliveryAddress;
@@ -160,6 +163,51 @@ public class DeliveriesController : ControllerBase
                 }
             }
 
+            var restaurantPoint = GeoCalculator.ResolveAddressCoordinates(
+                rest?.Latitude,
+                rest?.Longitude,
+                restaurantAddress,
+                restaurantName);
+
+            var customerPoint = GeoCalculator.ResolveAddressCoordinates(
+                mainAddr?.Latitude,
+                mainAddr?.Longitude,
+                deliveryAddress,
+                deliveryNeighborhood);
+
+            var stopsAheadForDelivery = new List<GeoPoint>();
+            if (d.CourierId.HasValue && d.Status is "DriverAssigned" or "PickedUp" or "InTransit")
+            {
+                var currentRefTime = d.AssignedAt ?? d.CreatedAt;
+                var earlierDeliveries = updatedList
+                    .Where(other =>
+                        other.Id != d.Id &&
+                        other.CourierId == d.CourierId &&
+                        other.Status is "DriverAssigned" or "PickedUp" or "InTransit" &&
+                        (other.AssignedAt ?? other.CreatedAt) < currentRefTime)
+                    .OrderBy(other => other.AssignedAt ?? other.CreatedAt)
+                    .ToList();
+
+                foreach (var earlier in earlierDeliveries)
+                {
+                    if (ordersById.TryGetValue(earlier.OrderId, out var earlierOrder))
+                    {
+                        stopsAheadForDelivery.Add(GeoCalculator.ResolveAddressCoordinates(
+                            null,
+                            null,
+                            earlierOrder.DeliveryAddress,
+                            $"Pedido #{earlier.OrderId.ToString()[..6]}"));
+                    }
+                }
+            }
+
+            var eta = GeoCalculator.EstimateDeliveryEta(
+                restaurantPoint,
+                customerPoint,
+                d.Status,
+                null,
+                stopsAheadForDelivery);
+
             enrichedList.Add(new
             {
                 id = d.Id,
@@ -167,7 +215,11 @@ public class DeliveriesController : ControllerBase
                 courierId = d.CourierId,
                 status = d.Status,
                 deliveryFee = d.DeliveryFee > 0 ? d.DeliveryFee : 8.50m,
-                distanceKm = d.DistanceKm ?? 3.4,
+                distanceKm = eta.TotalDistanceKm > 0 ? eta.TotalDistanceKm : (d.DistanceKm ?? 3.4),
+                estimatedMinutes = eta.EstimatedMinutes,
+                estimatedArrivalAt = eta.EstimatedArrivalAt,
+                stopsAhead = eta.StopsAhead,
+                routeSummary = eta.RouteSummary,
                 createdAt = d.CreatedAt,
                 updatedAt = d.UpdatedAt,
                 restaurantName,
@@ -298,23 +350,165 @@ public class DeliveriesController : ControllerBase
     public async Task<IActionResult> TrackDelivery(Guid id)
     {
         var delivery = await _deliveries.GetDeliveryByIdOrOrderAsync(id);
+        var orderId = delivery?.OrderId ?? id;
+
+        Application.Orders.Dtos.OrderDto? order = null;
+        try
+        {
+            order = await _orders.GetByIdAsync(orderId);
+        }
+        catch
+        {
+            // Pedido pode não existir em consultas diretas por deliveryId
+        }
+
+        Restaurant? restaurant = null;
+        Address? customerMainAddress = null;
+        if (order != null)
+        {
+            restaurant = await _restaurants.GetByIdAsync(order.RestaurantId);
+            var addrs = await _profiles.GetAddressesByUserAsync(order.CustomerId);
+            customerMainAddress = addrs.FirstOrDefault(a => a.IsMain) ?? addrs.FirstOrDefault();
+        }
+
         Courier? courier = null;
         List<DriverLocation> history = new();
+        var intermediateStops = new List<GeoPoint>();
+        var routeStops = new List<object>();
 
+        var restaurantFullAddress = restaurant != null && !string.IsNullOrWhiteSpace(restaurant.AddressStreet)
+            ? $"{restaurant.AddressStreet}, {restaurant.AddressNumber} - {restaurant.AddressNeighborhood}, {restaurant.AddressCity}/{restaurant.AddressState}"
+            : restaurant?.Name ?? "Restaurante Parceiro";
+
+        var customerFullAddress = !string.IsNullOrWhiteSpace(order?.DeliveryAddress)
+            ? order!.DeliveryAddress!
+            : customerMainAddress != null
+                ? $"{customerMainAddress.Street}, {customerMainAddress.Number} - {customerMainAddress.Neighborhood}, {customerMainAddress.City}/{customerMainAddress.State}"
+                : "Endereço do cliente";
+
+        var restaurantPoint = GeoCalculator.ResolveAddressCoordinates(
+            restaurant?.Latitude,
+            restaurant?.Longitude,
+            restaurantFullAddress,
+            restaurant?.Name ?? "Restaurante");
+
+        var customerPoint = GeoCalculator.ResolveAddressCoordinates(
+            customerMainAddress?.Latitude,
+            customerMainAddress?.Longitude,
+            customerFullAddress,
+            "Casa do cliente");
+
+        routeStops.Add(new
+        {
+            type = "Restaurant",
+            label = $"Restaurante: {restaurant?.Name ?? "Restaurante Parceiro"}",
+            address = restaurantFullAddress
+        });
+
+        GeoPoint? driverPoint = null;
         if (delivery?.CourierId != null)
         {
-            courier = await _deliveries.GetCourierByUserIdAsync(delivery.CourierId.Value);
-            history = await _deliveries.GetDriverLocationsAsync(delivery.CourierId.Value, 10);
+            courier = await _deliveries.GetCourierByUserIdAsync(delivery.CourierId.Value)
+                ?? await _deliveries.GetCourierByIdAsync(delivery.CourierId.Value);
+            history = await _deliveries.GetDriverLocationsAsync(courier?.Id ?? delivery.CourierId.Value, 10);
+
+            if (courier?.Latitude.HasValue == true && courier.Longitude.HasValue)
+            {
+                driverPoint = new GeoPoint(courier.Latitude.Value, courier.Longitude.Value, courier.Name);
+            }
+
+            var courierDeliveries = await _deliveries.GetDeliveriesByCourierAsync(delivery.CourierId.Value);
+            var currentRefTime = delivery.AssignedAt ?? delivery.CreatedAt;
+            var earlierDeliveries = courierDeliveries
+                .Where(d =>
+                    d.Id != delivery.Id &&
+                    d.OrderId != orderId &&
+                    d.Status is "DriverAssigned" or "PickedUp" or "InTransit" &&
+                    (d.AssignedAt ?? d.CreatedAt) < currentRefTime)
+                .OrderBy(d => d.AssignedAt ?? d.CreatedAt)
+                .ToList();
+
+            var stopIndex = 1;
+            foreach (var earlier in earlierDeliveries)
+            {
+                string stopAddress = "Entrega na região";
+                double? stopLat = null;
+                double? stopLon = null;
+
+                try
+                {
+                    var earlierOrder = await _orders.GetByIdAsync(earlier.OrderId);
+                    if (!string.IsNullOrWhiteSpace(earlierOrder.DeliveryAddress))
+                    {
+                        stopAddress = earlierOrder.DeliveryAddress;
+                    }
+                    else
+                    {
+                        var earlierAddrs = await _profiles.GetAddressesByUserAsync(earlierOrder.CustomerId);
+                        var earlierMain = earlierAddrs.FirstOrDefault(a => a.IsMain) ?? earlierAddrs.FirstOrDefault();
+                        if (earlierMain != null)
+                        {
+                            stopAddress = $"{earlierMain.Neighborhood}, {earlierMain.City}/{earlierMain.State}";
+                            stopLat = earlierMain.Latitude;
+                            stopLon = earlierMain.Longitude;
+                        }
+                    }
+                }
+                catch
+                {
+                    // Ignora caso pedido anterior não esteja acessível
+                }
+
+                intermediateStops.Add(GeoCalculator.ResolveAddressCoordinates(
+                    stopLat,
+                    stopLon,
+                    stopAddress,
+                    $"Parada {stopIndex}"));
+
+                routeStops.Add(new
+                {
+                    type = "IntermediateStop",
+                    label = $"Parada {stopIndex} antes de você",
+                    address = stopAddress
+                });
+                stopIndex++;
+            }
         }
+
+        routeStops.Add(new
+        {
+            type = "Destination",
+            label = "Sua casa (Destino final)",
+            address = customerFullAddress
+        });
+
+        var currentStatus = delivery?.Status ?? order?.Status ?? "InTransit";
+        var eta = GeoCalculator.EstimateDeliveryEta(
+            restaurantPoint,
+            customerPoint,
+            currentStatus,
+            driverPoint,
+            intermediateStops);
 
         return Ok(new
         {
             deliveryId = delivery?.Id ?? id,
-            orderId = delivery?.OrderId ?? id,
-            status = delivery?.Status ?? "InTransit",
+            orderId,
+            status = currentStatus,
             courierName = courier?.Name,
-            latitude = courier?.Latitude ?? -23.5629,
-            longitude = courier?.Longitude ?? -46.6544,
+            latitude = courier?.Latitude ?? restaurantPoint.Latitude,
+            longitude = courier?.Longitude ?? restaurantPoint.Longitude,
+            estimatedMinutes = eta.EstimatedMinutes,
+            estimatedArrivalAt = eta.EstimatedArrivalAt,
+            totalDistanceKm = eta.TotalDistanceKm,
+            stopsAhead = eta.StopsAhead,
+            preparationMinutes = eta.PreparationMinutes,
+            travelMinutes = eta.TravelMinutes,
+            stopsDelayMinutes = eta.StopsDelayMinutes,
+            routeSummary = eta.RouteSummary,
+            restaurantAddress = restaurantFullAddress,
+            customerAddress = customerFullAddress,
+            routeStops,
             recentLocations = history.Select(h => new
             {
                 h.Latitude,

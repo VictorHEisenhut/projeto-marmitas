@@ -18,19 +18,22 @@ public class SubscriptionsController : ControllerBase
     private readonly ICustomerProfileRepository _profiles;
     private readonly IPaymentRepository _payments;
     private readonly IPaymentGatewayFactory _gatewayFactory;
+    private readonly IRestaurantRepository _restaurants;
 
     public SubscriptionsController(
         ISubscriptionRepository subscriptions,
         ICreateOrderService orders,
         ICustomerProfileRepository profiles,
         IPaymentRepository payments,
-        IPaymentGatewayFactory gatewayFactory)
+        IPaymentGatewayFactory gatewayFactory,
+        IRestaurantRepository restaurants)
     {
         _subscriptions = subscriptions;
         _orders = orders;
         _profiles = profiles;
         _payments = payments;
         _gatewayFactory = gatewayFactory;
+        _restaurants = restaurants;
     }
 
     [HttpGet]
@@ -54,11 +57,18 @@ public class SubscriptionsController : ControllerBase
         var plan = await _subscriptions.GetPlanByIdAsync(request.PlanId);
         if (plan == null || !plan.IsActive)
             throw new Exception("Plano informado não encontrado.");
+        if (plan.RestaurantId == Guid.Empty)
+            throw new Exception("Este plano não está vinculado a um restaurante válido.");
+
+        var restaurant = await _restaurants.GetByIdAsync(plan.RestaurantId);
+        var restaurantName = !string.IsNullOrWhiteSpace(plan.RestaurantName)
+            ? plan.RestaurantName
+            : (restaurant?.Name ?? string.Empty);
 
         var userId = GetUserId();
         var existingSubs = await _subscriptions.GetSubscriptionsByUserAsync(userId);
-        if (existingSubs.Any(s => s.Status == "Active" && s.PlanId == plan.Id))
-            throw new Exception("Você já possui uma assinatura ativa neste plano.");
+        if (existingSubs.Any(s => s.Status == "Active" && s.RestaurantId == plan.RestaurantId))
+            throw new Exception("Você já possui uma assinatura ativa neste restaurante. Use a opção de alterar plano em Minha Conta.");
 
         var mealsInCycle = plan.MealsPerMonth > 0 ? plan.MealsPerMonth : plan.MealsPerWeek * 4;
         var gateway = _gatewayFactory.GetGateway();
@@ -74,13 +84,15 @@ public class SubscriptionsController : ControllerBase
             UserId = userId,
             PlanId = plan.Id,
             PlanName = plan.Name,
+            RestaurantId = plan.RestaurantId,
+            RestaurantName = restaurantName,
             MonthlyPrice = plan.MonthlyPrice,
             Status = charge.Approved ? "Active" : "GracePeriod",
             StartDate = DateTime.UtcNow,
             NextBillingDate = DateTime.UtcNow.AddMonths(1),
             TotalMealsInCycle = mealsInCycle,
             UsedMealsInCycle = 0,
-            PreferredRestaurantId = request.PreferredRestaurantId,
+            PreferredRestaurantId = plan.RestaurantId,
             DefaultAddressId = request.DefaultAddressId
         };
 
@@ -90,22 +102,40 @@ public class SubscriptionsController : ControllerBase
         }
 
         await _subscriptions.AddSubscriptionAsync(subscription);
-        await _payments.AddFinancialTransactionAsync(new FinancialTransaction
+
+        if (charge.Approved)
         {
-            SubscriptionId = subscription.Id,
-            TargetType = "Platform",
-            TargetId = userId,
-            EntryType = "Credit",
-            Category = "SubscriptionRevenue",
-            Amount = plan.MonthlyPrice,
-            Description = $"Contratação do plano de assinatura '{plan.Name}'"
-        });
+            var commissionAmount = Math.Round(plan.MonthlyPrice * 0.10m, 2);
+            var restaurantNet = Math.Max(0m, plan.MonthlyPrice - commissionAmount);
+
+            await _payments.AddFinancialTransactionAsync(new FinancialTransaction
+            {
+                SubscriptionId = subscription.Id,
+                TargetType = "Restaurant",
+                TargetId = plan.RestaurantId,
+                EntryType = "Credit",
+                Category = "SubscriptionRevenue",
+                Amount = restaurantNet,
+                Description = $"Assinatura '{plan.Name}' em {restaurantName} (líquido restaurante)"
+            });
+
+            await _payments.AddFinancialTransactionAsync(new FinancialTransaction
+            {
+                SubscriptionId = subscription.Id,
+                TargetType = "Platform",
+                TargetId = plan.RestaurantId,
+                EntryType = "Credit",
+                Category = "SubscriptionCommission",
+                Amount = commissionAmount,
+                Description = $"Comissão da plataforma (10%) sobre assinatura '{plan.Name}'"
+            });
+        }
 
         await _profiles.AddNotificationAsync(new Notification
         {
             UserId = userId,
             Title = "Assinatura ativada",
-            Message = $"Sua assinatura do plano '{plan.Name}' está ativa com franquia de {mealsInCycle} refeições no ciclo.",
+            Message = $"Sua assinatura do plano '{plan.Name}' ({restaurantName}) está ativa com franquia de {mealsInCycle} refeições no ciclo.",
             IsRead = false
         });
 
@@ -143,16 +173,46 @@ public class SubscriptionsController : ControllerBase
 
         sub.Renew(meals);
 
-        await _payments.AddFinancialTransactionAsync(new FinancialTransaction
+        if (sub.RestaurantId != Guid.Empty)
         {
-            SubscriptionId = sub.Id,
-            TargetType = "Platform",
-            TargetId = sub.UserId,
-            EntryType = "Credit",
-            Category = "SubscriptionRenewal",
-            Amount = sub.MonthlyPrice,
-            Description = $"Renovação mensal da assinatura '{sub.PlanName}'"
-        });
+            var commissionAmount = Math.Round(sub.MonthlyPrice * 0.10m, 2);
+            var restaurantNet = Math.Max(0m, sub.MonthlyPrice - commissionAmount);
+
+            await _payments.AddFinancialTransactionAsync(new FinancialTransaction
+            {
+                SubscriptionId = sub.Id,
+                TargetType = "Restaurant",
+                TargetId = sub.RestaurantId,
+                EntryType = "Credit",
+                Category = "SubscriptionRenewal",
+                Amount = restaurantNet,
+                Description = $"Renovação mensal '{sub.PlanName}' (líquido restaurante)"
+            });
+
+            await _payments.AddFinancialTransactionAsync(new FinancialTransaction
+            {
+                SubscriptionId = sub.Id,
+                TargetType = "Platform",
+                TargetId = sub.RestaurantId,
+                EntryType = "Credit",
+                Category = "SubscriptionCommission",
+                Amount = commissionAmount,
+                Description = $"Comissão da plataforma (10%) sobre renovação '{sub.PlanName}'"
+            });
+        }
+        else
+        {
+            await _payments.AddFinancialTransactionAsync(new FinancialTransaction
+            {
+                SubscriptionId = sub.Id,
+                TargetType = "Platform",
+                TargetId = sub.UserId,
+                EntryType = "Credit",
+                Category = "SubscriptionRenewal",
+                Amount = sub.MonthlyPrice,
+                Description = $"Renovação mensal da assinatura '{sub.PlanName}'"
+            });
+        }
 
         await _profiles.AddNotificationAsync(new Notification
         {
@@ -195,16 +255,48 @@ public class SubscriptionsController : ControllerBase
         var proratedDiff = sub.ChangePlan(newPlan);
         if (proratedDiff != 0)
         {
-            await _payments.AddFinancialTransactionAsync(new FinancialTransaction
+            var entryType = proratedDiff > 0 ? "Credit" : "Debit";
+            var absDiff = Math.Abs(proratedDiff);
+            if (sub.RestaurantId != Guid.Empty)
             {
-                SubscriptionId = sub.Id,
-                TargetType = "Platform",
-                TargetId = sub.UserId,
-                EntryType = proratedDiff > 0 ? "Credit" : "Debit",
-                Category = "SubscriptionProrata",
-                Amount = Math.Abs(proratedDiff),
-                Description = $"Ajuste prorrata de alteração de plano para '{newPlan.Name}'"
-            });
+                var commissionDiff = Math.Round(absDiff * 0.10m, 2);
+                var restaurantDiff = Math.Max(0m, absDiff - commissionDiff);
+
+                await _payments.AddFinancialTransactionAsync(new FinancialTransaction
+                {
+                    SubscriptionId = sub.Id,
+                    TargetType = "Restaurant",
+                    TargetId = sub.RestaurantId,
+                    EntryType = entryType,
+                    Category = "SubscriptionProrata",
+                    Amount = restaurantDiff,
+                    Description = $"Ajuste prorrata de alteração para '{newPlan.Name}' (restaurante)"
+                });
+
+                await _payments.AddFinancialTransactionAsync(new FinancialTransaction
+                {
+                    SubscriptionId = sub.Id,
+                    TargetType = "Platform",
+                    TargetId = sub.RestaurantId,
+                    EntryType = entryType,
+                    Category = "SubscriptionProrata",
+                    Amount = commissionDiff,
+                    Description = $"Ajuste prorrata de comissão para '{newPlan.Name}'"
+                });
+            }
+            else
+            {
+                await _payments.AddFinancialTransactionAsync(new FinancialTransaction
+                {
+                    SubscriptionId = sub.Id,
+                    TargetType = "Platform",
+                    TargetId = sub.UserId,
+                    EntryType = entryType,
+                    Category = "SubscriptionProrata",
+                    Amount = absDiff,
+                    Description = $"Ajuste prorrata de alteração de plano para '{newPlan.Name}'"
+                });
+            }
         }
 
         await _subscriptions.SaveChangesAsync();
@@ -222,7 +314,11 @@ public class SubscriptionsController : ControllerBase
         if (request.DefaultAddressId.HasValue)
             sub.DefaultAddressId = request.DefaultAddressId;
         if (request.PreferredRestaurantId.HasValue)
+        {
+            if (sub.RestaurantId != Guid.Empty && request.PreferredRestaurantId.Value != sub.RestaurantId)
+                throw new Exception("A assinatura pertence exclusivamente ao restaurante contratado.");
             sub.PreferredRestaurantId = request.PreferredRestaurantId;
+        }
 
         await _subscriptions.SaveChangesAsync();
         return Ok(sub);
@@ -243,10 +339,13 @@ public class SubscriptionsController : ControllerBase
         if (sub.Status != "Active")
             throw new Exception("Apenas assinaturas ativas permitem agendar entregas.");
 
+        if (request.RestaurantId.HasValue && sub.RestaurantId != Guid.Empty && request.RestaurantId.Value != sub.RestaurantId)
+            throw new Exception("Os agendamentos desta assinatura devem ser feitos para o restaurante contratado.");
+
         var scheduled = new SubscriptionDelivery
         {
             SubscriptionId = sub.Id,
-            RestaurantId = request.RestaurantId ?? sub.PreferredRestaurantId,
+            RestaurantId = sub.RestaurantId != Guid.Empty ? sub.RestaurantId : (request.RestaurantId ?? sub.PreferredRestaurantId),
             AddressId = request.AddressId ?? sub.DefaultAddressId,
             ScheduledDate = request.ScheduledDate == default ? DateTime.UtcNow.AddDays(1) : request.ScheduledDate,
             DeliveryWindow = string.IsNullOrWhiteSpace(request.DeliveryWindow) ? "11:30 - 13:30" : request.DeliveryWindow.Trim(),
@@ -277,7 +376,10 @@ public class SubscriptionsController : ControllerBase
     {
         var sub = await GetRequiredAsync(id);
         var userOrders = await _orders.GetMyOrdersAsync(sub.UserId);
-        return Ok(new { subscriptionId = sub.Id, orders = userOrders });
+        var filteredOrders = userOrders
+            .Where(o => o.SubscriptionId == sub.Id || (sub.RestaurantId != Guid.Empty && o.RestaurantId == sub.RestaurantId))
+            .ToList();
+        return Ok(new { subscriptionId = sub.Id, orders = filteredOrders });
     }
 
     [HttpGet("{id}/pagamentos")]

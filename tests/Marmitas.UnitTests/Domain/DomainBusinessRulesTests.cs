@@ -88,6 +88,39 @@ public class DomainBusinessRulesTests
     }
 
     [Fact]
+    public void Subscription_TrocaParaPlanoDeOutroRestaurante_DeveLancarDomainException()
+    {
+        var restaurantA = Guid.NewGuid();
+        var restaurantB = Guid.NewGuid();
+
+        var sub = new Subscription
+        {
+            UserId = Guid.NewGuid(),
+            PlanId = Guid.NewGuid(),
+            PlanName = "Plano Restaurante A",
+            RestaurantId = restaurantA,
+            RestaurantName = "Restaurante A",
+            MonthlyPrice = 200m,
+            Status = "Active",
+            StartDate = DateTime.UtcNow.AddDays(-10),
+            NextBillingDate = DateTime.UtcNow.AddDays(20),
+            TotalMealsInCycle = 20
+        };
+
+        var otherRestaurantPlan = new Plan
+        {
+            RestaurantId = restaurantB,
+            RestaurantName = "Restaurante B",
+            Name = "Plano Restaurante B",
+            MealsPerWeek = 5,
+            MealsPerMonth = 20,
+            MonthlyPrice = 250m
+        };
+
+        Assert.Throws<DomainException>(() => sub.ChangePlan(otherRestaurantPlan));
+    }
+
+    [Fact]
     public void Delivery_AceiteConcorrentePorOutroEntregador_DeveLancarConflito()
     {
         var delivery = new Delivery
@@ -139,6 +172,30 @@ public class DomainBusinessRulesTests
 
         Assert.True(distanceKm > 2.5 && distanceKm < 5.0);
         Assert.True(fee > 5.90m);
+    }
+
+    [Fact]
+    public void GeoCalculator_TempoEstimadoComOutrasParadas_DeveSomarTempoEDistanciaDasParadas()
+    {
+        var restaurant = new GeoPoint(-23.5535, -46.6902, "Restaurante");
+        var customer = new GeoPoint(-23.5890, -46.6365, "Casa do Cliente");
+        var stop1 = new GeoPoint(-23.5661, -46.6805, "Parada 1");
+        var stop2 = new GeoPoint(-23.5594, -46.6468, "Parada 2");
+
+        var directEta = GeoCalculator.EstimateDeliveryEta(restaurant, customer, "InTransit", restaurant);
+        var multiStopEta = GeoCalculator.EstimateDeliveryEta(
+            restaurant,
+            customer,
+            "InTransit",
+            restaurant,
+            new[] { stop1, stop2 });
+
+        Assert.Equal(0, directEta.StopsAhead);
+        Assert.Equal(2, multiStopEta.StopsAhead);
+        Assert.True(multiStopEta.EstimatedMinutes > directEta.EstimatedMinutes);
+        Assert.True(multiStopEta.TotalDistanceKm >= directEta.TotalDistanceKm);
+        Assert.Equal(10, multiStopEta.StopsDelayMinutes);
+        Assert.Contains("2 paradas anteriores", multiStopEta.RouteSummary);
     }
 
     [Fact]

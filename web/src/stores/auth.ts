@@ -54,6 +54,12 @@ export const useAuthStore = defineStore('auth', () => {
     return Array.from(new Set([...userRoles, ...tokenRoles]))
   })
 
+  const isDriverOnly = computed(
+    () =>
+      hasRole(['driver']) &&
+      !hasRole(['customer', 'restaurant_owner', 'restaurant_staff', 'admin', 'super_admin']),
+  )
+
   const defaultRoute = computed(() => {
     if (hasRole(['admin', 'super_admin'])) return '/admin'
     if (hasRole(['restaurant_owner', 'restaurant_staff'])) return '/parceiro'
@@ -196,6 +202,7 @@ export const useAuthStore = defineStore('auth', () => {
     const { data } = await api.post<LoginResponse>('/auth/login', {
       email: credentials.email.trim().toLowerCase(),
       password: credentials.password,
+      mfaCode: credentials.mfaCode?.trim() || undefined,
     })
     setSession(data)
     return data
@@ -208,6 +215,7 @@ export const useAuthStore = defineStore('auth', () => {
       phone: payload.phone?.trim() || null,
       password: payload.password,
       role: payload.role,
+      termsAccepted: payload.termsAccepted ?? true,
     })
     return data
   }
@@ -229,6 +237,7 @@ export const useAuthStore = defineStore('auth', () => {
     expiresAt,
     initialized,
     isAuthenticated,
+    isDriverOnly,
     roles,
     defaultRoute,
     hasRole,

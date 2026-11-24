@@ -13,11 +13,18 @@ public class SubscriptionRepository : ISubscriptionRepository
         _context = context;
     }
 
-    public Task<List<Plan>> GetActivePlansAsync()
+    public Task<List<Plan>> GetActivePlansAsync(Guid? restaurantId = null)
     {
-        return _context.Plans
+        var query = _context.Plans
             .AsNoTracking()
-            .Where(p => p.IsActive)
+            .Where(p => p.IsActive);
+
+        if (restaurantId.HasValue && restaurantId.Value != Guid.Empty)
+        {
+            query = query.Where(p => p.RestaurantId == restaurantId.Value);
+        }
+
+        return query
             .OrderBy(p => p.MonthlyPrice)
             .ToListAsync();
     }
