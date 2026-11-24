@@ -161,26 +161,29 @@ public static class GeoCalculator
         }
 
         var text = (addressText ?? string.Empty).ToLowerInvariant();
-        if (text.Contains("vila madalena")) return new GeoPoint(-23.5535, -46.6902, label);
-        if (text.Contains("moema")) return new GeoPoint(-23.6022, -46.6619, label);
-        if (text.Contains("bela vista") || text.Contains("paulista")) return new GeoPoint(-23.5594, -46.6468, label);
-        if (text.Contains("pinheiros")) return new GeoPoint(-23.5661, -46.6805, label);
-        if (text.Contains("vila mariana")) return new GeoPoint(-23.5890, -46.6365, label);
-        if (text.Contains("itaim")) return new GeoPoint(-23.5847, -46.6783, label);
-        if (text.Contains("jardins") || text.Contains("jardim")) return new GeoPoint(-23.5649, -46.6689, label);
-        if (text.Contains("brooklin")) return new GeoPoint(-23.6114, -46.6915, label);
-        if (text.Contains("perdizes")) return new GeoPoint(-23.5364, -46.6781, label);
-        if (text.Contains("consolação") || text.Contains("consolacao")) return new GeoPoint(-23.5530, -46.6606, label);
-        if (text.Contains("tatuapé") || text.Contains("tatuape")) return new GeoPoint(-23.5407, -46.5766, label);
-        if (text.Contains("santana")) return new GeoPoint(-23.5015, -46.6252, label);
-        if (text.Contains("morumbi")) return new GeoPoint(-23.5975, -46.7166, label);
-        if (text.Contains("centro") || text.Contains("sé") || text.Contains("republica")) return new GeoPoint(-23.5505, -46.6333, label);
+        if (text.Contains("victor konder") || text.Contains("furb")) return new GeoPoint(-26.9068, -49.0772, label);
+        if (text.Contains("vila nova")) return new GeoPoint(-26.9094, -49.0867, label);
+        if (text.Contains("velha")) return new GeoPoint(-26.9242, -49.0932, label);
+        if (text.Contains("ponta aguda")) return new GeoPoint(-26.9147, -49.0558, label);
+        if (text.Contains("garcia")) return new GeoPoint(-26.9355, -49.0638, label);
+        if (text.Contains("itoupava norte")) return new GeoPoint(-26.8856, -49.0731, label);
+        if (text.Contains("itoupava seca")) return new GeoPoint(-26.8986, -49.0778, label);
+        if (text.Contains("itoupava central")) return new GeoPoint(-26.8260, -49.0846, label);
+        if (text.Contains("salto")) return new GeoPoint(-26.9012, -49.1045, label);
+        if (text.Contains("água verde") || text.Contains("agua verde")) return new GeoPoint(-26.9178, -49.1066, label);
+        if (text.Contains("escola agrícola") || text.Contains("escola agricola")) return new GeoPoint(-26.9016, -49.0928, label);
+        if (text.Contains("vorstadt")) return new GeoPoint(-26.9225, -49.0467, label);
+        if (text.Contains("boa vista")) return new GeoPoint(-26.9030, -49.0695, label);
+        if (text.Contains("fortaleza")) return new GeoPoint(-26.8895, -49.0564, label);
+        if (text.Contains("progresso")) return new GeoPoint(-26.9685, -49.0680, label);
+        if (text.Contains("badenfurt")) return new GeoPoint(-26.8742, -49.1246, label);
+        if (text.Contains("centro") || text.Contains("xv de novembro")) return new GeoPoint(-26.9194, -49.0661, label);
 
-        // Deslocamento determinístico dentro da zona urbana quando o endereço não possui geocodificação prévia
+        // Deslocamento determinístico dentro da zona urbana de Blumenau/SC quando o endereço não possui geocodificação prévia
         var hash = Math.Abs((addressText ?? "default").GetHashCode());
         var latOffset = ((hash % 60) - 30) * 0.0012;
         var lonOffset = (((hash / 60) % 60) - 30) * 0.0012;
-        return new GeoPoint(Math.Round(-23.5614 + latOffset, 5), Math.Round(-46.6559 + lonOffset, 5), label);
+        return new GeoPoint(Math.Round(-26.9194 + latOffset, 5), Math.Round(-49.0661 + lonOffset, 5), label);
     }
 
     private static double ToRadians(double degrees) => degrees * Math.PI / 180.0;

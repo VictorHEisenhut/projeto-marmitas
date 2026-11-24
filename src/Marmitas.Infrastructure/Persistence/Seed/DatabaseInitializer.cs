@@ -104,7 +104,7 @@ public static class DatabaseInitializer
                 id UUID PRIMARY KEY,
                 restaurant_id UUID NOT NULL,
                 neighborhood VARCHAR(120) NOT NULL,
-                city VARCHAR(120) NOT NULL DEFAULT 'São Paulo',
+                city VARCHAR(120) NOT NULL DEFAULT 'Blumenau',
                 radius_km DOUBLE PRECISION NOT NULL DEFAULT 8.0,
                 delivery_fee NUMERIC(10,2) NOT NULL DEFAULT 6.90,
                 estimated_minutes INT NOT NULL DEFAULT 35,
@@ -362,58 +362,74 @@ public static class DatabaseInitializer
             ALTER TABLE reviews ADD COLUMN IF NOT EXISTS restaurant_name VARCHAR(150) NOT NULL DEFAULT 'Restaurante Parceiro';
 
             UPDATE restaurants
-            SET address_street = 'Rua Harmonia',
+            SET address_street = 'Rua XV de Novembro',
                 address_number = '450',
-                address_neighborhood = 'Vila Madalena',
-                address_city = 'São Paulo',
-                address_state = 'SP',
-                address_zip_code = '05435-000',
-                latitude = -23.5535,
-                longitude = -46.6902
-            WHERE id = 'aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa' AND address_street = '';
+                address_neighborhood = 'Centro',
+                address_city = 'Blumenau',
+                address_state = 'SC',
+                address_zip_code = '89010-001',
+                latitude = -26.9194,
+                longitude = -49.0661
+            WHERE id = 'aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa' AND (address_street = '' OR address_city = 'São Paulo');
 
             UPDATE restaurants
-            SET address_street = 'Av. Ibirapuera',
-                address_number = '2120',
-                address_neighborhood = 'Moema',
-                address_city = 'São Paulo',
-                address_state = 'SP',
-                address_zip_code = '04028-001',
-                latitude = -23.6022,
-                longitude = -46.6619
-            WHERE id = 'bbbbbbbb-2222-2222-2222-bbbbbbbbbbbb' AND address_street = '';
+            SET address_street = 'Rua Antônio da Veiga',
+                address_number = '520',
+                address_neighborhood = 'Victor Konder',
+                address_city = 'Blumenau',
+                address_state = 'SC',
+                address_zip_code = '89012-500',
+                latitude = -26.9068,
+                longitude = -49.0772
+            WHERE id = 'bbbbbbbb-2222-2222-2222-bbbbbbbbbbbb' AND (address_street = '' OR address_city = 'São Paulo');
 
             UPDATE restaurants
-            SET address_street = 'Rua Treze de Maio',
+            SET address_street = 'Rua Almirante Barroso',
                 address_number = '890',
-                address_neighborhood = 'Bela Vista',
-                address_city = 'São Paulo',
-                address_state = 'SP',
-                address_zip_code = '01327-000',
-                latitude = -23.5594,
-                longitude = -46.6468
-            WHERE id = 'cccccccc-3333-3333-3333-cccccccccccc' AND address_street = '';
+                address_neighborhood = 'Vila Nova',
+                address_city = 'Blumenau',
+                address_state = 'SC',
+                address_zip_code = '89035-400',
+                latitude = -26.9094,
+                longitude = -49.0867
+            WHERE id = 'cccccccc-3333-3333-3333-cccccccccccc' AND (address_street = '' OR address_city = 'São Paulo');
 
             UPDATE restaurants
-            SET address_street = 'Rua dos Pinheiros',
+            SET address_street = 'Rua João Pessoa',
                 address_number = '315',
-                address_neighborhood = 'Pinheiros',
-                address_city = 'São Paulo',
-                address_state = 'SP',
-                address_zip_code = '05422-010',
-                latitude = -23.5661,
-                longitude = -46.6805
-            WHERE address_street = '';
+                address_neighborhood = 'Velha',
+                address_city = 'Blumenau',
+                address_state = 'SC',
+                address_zip_code = '89036-000',
+                latitude = -26.9242,
+                longitude = -49.0932
+            WHERE address_street = '' OR address_city = 'São Paulo';
 
             INSERT INTO addresses (id, user_id, street, number, complement, neighborhood, city, state, zip_code, is_main, latitude, longitude, created_at, updated_at)
-            SELECT '44444444-aaaa-4444-4444-444444444444', '44444444-4444-4444-4444-444444444444', 'Rua Domingos de Morais', '1450', 'Apto 82', 'Vila Mariana', 'São Paulo', 'SP', '04010-200', TRUE, -23.5890, -46.6365, NOW(), NOW()
+            SELECT '44444444-aaaa-4444-4444-444444444444', '44444444-4444-4444-4444-444444444444', 'Rua República Argentina', '1450', 'Apto 82', 'Ponta Aguda', 'Blumenau', 'SC', '89050-100', TRUE, -26.9147, -49.0558, NOW(), NOW()
             WHERE EXISTS (SELECT 1 FROM users WHERE id = '44444444-4444-4444-4444-444444444444')
-            ON CONFLICT (id) DO NOTHING;
+            ON CONFLICT (id) DO UPDATE SET
+                street = EXCLUDED.street,
+                neighborhood = EXCLUDED.neighborhood,
+                city = EXCLUDED.city,
+                state = EXCLUDED.state,
+                zip_code = EXCLUDED.zip_code,
+                latitude = EXCLUDED.latitude,
+                longitude = EXCLUDED.longitude
+            WHERE addresses.city = 'São Paulo';
 
             INSERT INTO addresses (id, user_id, street, number, complement, neighborhood, city, state, zip_code, is_main, latitude, longitude, created_at, updated_at)
-            SELECT '55555555-aaaa-5555-5555-555555555555', '55555555-5555-5555-5555-555555555555', 'Rua Teodoro Sampaio', '980', 'Bloco B', 'Pinheiros', 'São Paulo', 'SP', '05406-050', TRUE, -23.5612, -46.6789, NOW(), NOW()
+            SELECT '55555555-aaaa-5555-5555-555555555555', '55555555-5555-5555-5555-555555555555', 'Rua Amazonas', '980', 'Bloco B', 'Garcia', 'Blumenau', 'SC', '89020-000', TRUE, -26.9355, -49.0638, NOW(), NOW()
             WHERE EXISTS (SELECT 1 FROM users WHERE id = '55555555-5555-5555-5555-555555555555')
-            ON CONFLICT (id) DO NOTHING;
+            ON CONFLICT (id) DO UPDATE SET
+                street = EXCLUDED.street,
+                neighborhood = EXCLUDED.neighborhood,
+                city = EXCLUDED.city,
+                state = EXCLUDED.state,
+                zip_code = EXCLUDED.zip_code,
+                latitude = EXCLUDED.latitude,
+                longitude = EXCLUDED.longitude
+            WHERE addresses.city = 'São Paulo';
 
             INSERT INTO reviews (id, order_id, restaurant_id, user_id, rating, comment, target_type, author_name, restaurant_name, created_at, updated_at) VALUES
                 ('77777777-0001-0001-0001-777777777771', '00000000-0000-0000-0000-000000000000', 'aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa', '44444444-4444-4444-4444-444444444444', 5, 'Marmita chegou super quentinha e muito bem temperada! A feijoada é nota 10.', 'Customer', 'Lucas Mendes', 'Sabores da Vila Gastronomia', NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days'),

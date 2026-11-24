@@ -259,7 +259,7 @@ onMounted(() => {
               :model-value="phone"
               label="Telefone"
               type="tel"
-              placeholder="(11) 99999-9999"
+              placeholder="(47) 99999-9999"
               @input="onPhoneInput"
             />
             <AppButton type="submit" variant="primary" size="md" :loading="savingProfile">
@@ -279,12 +279,12 @@ onMounted(() => {
       </template>
 
       <!-- CUSTOMER / STANDARD VIEW (Clean Side Navigation + Active Panel) -->
-      <div v-else class="grid gap-6 lg:grid-cols-12 items-start">
+      <div v-else class="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
         <!-- Sidebar Navigation (Horizontal Scroll on Mobile, Vertical Sticky on Desktop) -->
-        <aside class="lg:col-span-3 lg:sticky lg:top-24">
+        <aside class="min-w-0 w-full lg:col-span-3 lg:sticky lg:top-24">
           <nav
             aria-label="Seções da conta"
-            class="flex gap-1.5 overflow-x-auto no-scrollbar pb-1 lg:flex-col lg:rounded-2xl lg:border lg:border-line lg:bg-surface lg:p-2 lg:shadow-card"
+            class="flex max-w-full gap-1.5 overflow-x-auto no-scrollbar pb-1 lg:flex-col lg:rounded-2xl lg:border lg:border-line lg:bg-surface lg:p-2 lg:shadow-card"
           >
             <button
               v-for="item in customerNavItems"
@@ -305,7 +305,7 @@ onMounted(() => {
         </aside>
 
         <!-- Active Tab Content -->
-        <div class="lg:col-span-9 space-y-6 min-w-0">
+        <div class="min-w-0 w-full lg:col-span-9 space-y-6">
           <div v-if="loading" class="space-y-4">
             <AppSkeleton variant="card" height="220px" />
             <AppSkeleton variant="card" height="160px" />
@@ -325,7 +325,7 @@ onMounted(() => {
                   :model-value="phone"
                   label="Telefone / WhatsApp"
                   type="tel"
-                  placeholder="(11) 99999-9999"
+                  placeholder="(47) 99999-9999"
                   @input="onPhoneInput"
                 />
                 <div class="sm:col-span-2 pt-1">

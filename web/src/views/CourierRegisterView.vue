@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { ArrowLeft, ArrowRight, CheckCircle2, Search } from 'lucide-vue-next'
+import { computed, ref } from 'vue'
+import { ArrowLeft, ArrowRight, CheckCircle2, Search, ShieldCheck } from 'lucide-vue-next'
 import AuthLayout from '@/layouts/AuthLayout.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppInput from '@/components/ui/AppInput.vue'
@@ -27,8 +27,8 @@ const billingZipCode = ref('')
 const billingStreet = ref('')
 const billingNumber = ref('')
 const billingNeighborhood = ref('')
-const billingCity = ref('')
-const billingState = ref('SP')
+const billingCity = ref('Blumenau')
+const billingState = ref('SC')
 
 const loading = ref(false)
 const lookingUpCep = ref(false)
@@ -45,6 +45,35 @@ function onPhoneInput(event: Event) {
   const target = event.target as HTMLInputElement
   phone.value = formatPhone(target.value)
 }
+
+function onPlateInput(value: string) {
+  vehiclePlate.value = value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 8)
+}
+
+function onStateInput(value: string) {
+  billingState.value = value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2)
+}
+
+const requirementsChecklist = computed(() => [
+  { key: 'cpf', label: 'CPF', done: cpf.value.replace(/\D/g, '').length >= 11 },
+  { key: 'cnh', label: 'CNH', done: cnh.value.trim().length >= 5 },
+  {
+    key: 'vehicle',
+    label: 'Veículo',
+    done: Boolean(vehicleType.value && vehicleModel.value.trim() && vehiclePlate.value.trim().length >= 6),
+  },
+  {
+    key: 'billing',
+    label: 'End. Cobrança',
+    done: Boolean(
+      billingZipCode.value.trim() &&
+      billingStreet.value.trim() &&
+      billingNumber.value.trim() &&
+      billingCity.value.trim() &&
+      billingState.value.trim().length === 2,
+    ),
+  },
+])
 
 function goNextStep() {
   error.value = ''
@@ -192,6 +221,27 @@ async function handleSubmit() {
         </div>
       </div>
 
+      <!-- Live 4-Item Mandatory Queue Checklist -->
+      <div class="rounded-2xl border border-line bg-surface-subtle p-3">
+        <div class="mb-2 flex items-center gap-1.5 text-[11px] font-bold text-ink-secondary">
+          <ShieldCheck class="h-3.5 w-3.5 text-brand-600" />
+          <span>Requisitos obrigatórios para liberar a fila de corridas</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div
+            v-for="req in requirementsChecklist"
+            :key="req.key"
+            class="flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors"
+            :class="req.done
+              ? 'border-fresh-200 bg-fresh-50 text-fresh-700 dark:border-fresh-900/60 dark:bg-fresh-950/40 dark:text-fresh-300'
+              : 'border-line bg-surface text-ink-muted'"
+          >
+            <CheckCircle2 class="h-3.5 w-3.5 shrink-0" :class="req.done ? 'text-fresh-600' : 'text-ink-muted opacity-50'" />
+            <span class="truncate">{{ req.label }}</span>
+          </div>
+        </div>
+      </div>
+
       <div
         v-if="error"
         role="alert"
@@ -242,7 +292,14 @@ async function handleSubmit() {
                 </select>
               </div>
               <AppInput v-model="vehicleModel" label="Modelo" required placeholder="CG 160" />
-              <AppInput v-model="vehiclePlate" label="Placa" required placeholder="ABC1D23" input-class="uppercase" />
+              <AppInput
+                :model-value="vehiclePlate"
+                label="Placa"
+                required
+                placeholder="ABC1D23"
+                input-class="uppercase font-mono"
+                @update:model-value="onPlateInput"
+              />
             </div>
           </div>
         </template>
@@ -266,7 +323,14 @@ async function handleSubmit() {
             <div class="grid gap-3 sm:grid-cols-3">
               <AppInput v-model="billingNeighborhood" label="Bairro" required />
               <AppInput v-model="billingCity" label="Cidade" required />
-              <AppInput v-model="billingState" label="UF" required maxlength="2" input-class="uppercase" />
+              <AppInput
+                :model-value="billingState"
+                label="UF"
+                required
+                maxlength="2"
+                input-class="uppercase font-mono"
+                @update:model-value="onStateInput"
+              />
             </div>
           </div>
 

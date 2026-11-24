@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ClipboardList, RefreshCw, ShoppingBag, Truck } from 'lucide-vue-next'
 import CustomerLayout from '@/layouts/CustomerLayout.vue'
 import CheckoutPanel from '@/components/customer/CheckoutPanel.vue'
+import LiveOrderMapHero from '@/components/customer/LiveOrderMapHero.vue'
 import OrderTrackingCard from '@/components/customer/OrderTrackingCard.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppTabs from '@/components/ui/AppTabs.vue'
@@ -12,6 +13,7 @@ import { api, getErrorMessage } from '@/services/api'
 import { OrderTrackingClient } from '@/services/realtime'
 import { useCartStore } from '@/stores/cart'
 import { useAddressStore } from '@/stores/address'
+import { useActiveOrderStore } from '@/stores/activeOrder'
 import { useToastStore } from '@/stores/toast'
 import type {
   Address,
@@ -24,32 +26,17 @@ import type {
 
 const cart = useCartStore()
 const addressStore = useAddressStore()
+const activeOrderStore = useActiveOrderStore()
 const toast = useToastStore()
 
 const orders = ref<Order[]>([])
 const addresses = ref<Address[]>([])
 const selectedAddressId = ref(addressStore.selectedAddress?.id || '')
-const subscriptions = ref<Subscription[]>([])
-const plans = ref<Plan[]>([])
+const activeSubscription = ref<Subscription | null>(null)
+const weeklyPlanLimit = ref<number | null>(null)
 const cartEstimate = ref<CartDeliveryEstimate | null>(null)
 const loading = ref(true)
 const error = ref('')
-
-const activeSubscription = computed<Subscription | null>(() => {
-  const rid = cart.restaurantId
-  if (!rid) return null
-  return (
-    subscriptions.value.find(
-      (s) => s.status === 'Active' && (s.restaurantId === rid || s.preferredRestaurantId === rid),
-    ) || null
-  )
-})
-
-const weeklyPlanLimit = computed<number | null>(() => {
-  if (!activeSubscription.value) return null
-  const plan = plans.value.find((p) => p.id === activeSubscription.value!.planId)
-  return plan?.mealsPerWeek ?? 5
-})
 
 const historyTab = ref<'active' | 'history'>('active')
 
@@ -74,17 +61,18 @@ const activeStatuses = new Set([
 const activeOrders = computed(() => orders.value.filter((o) => activeStatuses.has(o.status)))
 const pastOrders = computed(() => orders.value.filter((o) => !activeStatuses.has(o.status)))
 
+const heroOrder = computed<Order | null>(() => {
+  if (trackingOrderId.value) {
+    const found = activeOrders.value.find((o) => o.id === trackingOrderId.value)
+    if (found) return found
+  }
+  return activeOrders.value[0] ?? null
+})
+
 const usedPlanMealsThisWeek = computed(() => {
   const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000
-  const subId = activeSubscription.value?.id
-  const rid = cart.restaurantId
   return orders.value
-    .filter(
-      (o) =>
-        o.status !== 'Cancelled' &&
-        new Date(o.createdAt).getTime() >= cutoff &&
-        (!rid || o.restaurantId === rid || (subId && o.subscriptionId === subId)),
-    )
+    .filter((o) => o.status !== 'Cancelled' && new Date(o.createdAt).getTime() >= cutoff)
     .flatMap((o) => o.items || [])
     .filter((i) => i.productName.toUpperCase().startsWith('[PLANO]'))
     .reduce((acc, i) => acc + i.quantity, 0)
@@ -125,7 +113,8 @@ const realtimeClient = new OrderTrackingClient({
       target.updatedAt = payload.updatedAt
       toast.info(`Pedido #${target.id.slice(0, 8)} atualizado para: ${payload.status}`)
     }
-    if (trackingOrderId.value === payload.orderId && target) {
+    void activeOrderStore.refresh()
+    if ((trackingOrderId.value === payload.orderId || heroOrder.value?.id === payload.orderId) && target) {
       void openTrackingForOrder(target)
     }
   },
@@ -135,7 +124,7 @@ const realtimeClient = new OrderTrackingClient({
       longitude: payload.longitude,
       updatedAt: payload.updatedAt,
     }
-    if (trackingOrderId.value === payload.orderId) {
+    if (trackingOrderId.value === payload.orderId || heroOrder.value?.id === payload.orderId) {
       const target = orders.value.find((o) => o.id === payload.orderId)
       if (target) {
         void openTrackingForOrder(target)
@@ -162,8 +151,8 @@ async function openTrackingForOrder(order: Order) {
       deliveryId: order.id,
       orderId: order.id,
       status: order.status,
-      latitude: live?.latitude ?? -23.5629,
-      longitude: live?.longitude ?? -46.6544,
+      latitude: live?.latitude ?? -26.9194,
+      longitude: live?.longitude ?? -49.0661,
       updatedAt: live?.updatedAt ?? order.updatedAt,
     }
   } finally {
@@ -202,13 +191,9 @@ async function loadOrders() {
       } else if (activeOrders.value.length > 0) {
         historyTab.value = 'active'
       }
-      if (!trackingOrderId.value) {
-        const activeInTransit = orders.value.find(
-          (o) => o.status === 'DriverAssigned' || o.status === 'PickedUp' || o.status === 'InTransit',
-        )
-        if (activeInTransit) {
-          void openTrackingForOrder(activeInTransit)
-        }
+      const firstActive = activeOrders.value[0]
+      if (firstActive) {
+        void openTrackingForOrder(firstActive)
       }
     }
 
@@ -227,15 +212,20 @@ async function loadOrders() {
     }
 
     if (subsRes.status === 'fulfilled') {
-      subscriptions.value = subsRes.value.data
-    }
-    if (plansRes.status === 'fulfilled') {
-      plans.value = plansRes.value.data
+      const active = subsRes.value.data.find((s) => s.status === 'Active') || null
+      activeSubscription.value = active
+      if (active && plansRes.status === 'fulfilled') {
+        const plan = plansRes.value.data.find((p) => p.id === active.planId)
+        weeklyPlanLimit.value = plan?.mealsPerWeek ?? 5
+      } else {
+        weeklyPlanLimit.value = null
+      }
     }
   } catch (err) {
     error.value = getErrorMessage(err, 'Não foi possível carregar seus pedidos.')
   } finally {
     loading.value = false
+    void activeOrderStore.refresh()
   }
 }
 
@@ -257,14 +247,13 @@ onUnmounted(() => {
 <template>
   <CustomerLayout hide-floating-cart>
     <div class="mx-auto max-w-6xl space-y-8 px-4 py-6 sm:px-6 sm:py-8">
-      <!-- Header -->
       <div class="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
           <h1 class="font-display text-2xl font-extrabold tracking-tight text-ink sm:text-3xl">
             {{ cart.items.length > 0 ? 'Finalizar Pedido & Acompanhamento' : 'Meus Pedidos' }}
           </h1>
           <p class="mt-1 text-sm text-ink-secondary">
-            Acompanhe o preparo, rota GPS ao vivo, PIN de entrega e histórico completo.
+            Acompanhe o preparo, mapa GPS ao vivo, PIN de entrega e histórico completo.
           </p>
         </div>
 
@@ -281,7 +270,7 @@ onUnmounted(() => {
         {{ error }}
       </div>
 
-      <!-- 2-Column Checkout Flow when Cart has items -->
+      <!-- 2-Column Checkout Flow -->
       <CheckoutPanel
         v-if="cart.items.length > 0"
         v-model:selected-address-id="selectedAddressId"
@@ -293,7 +282,14 @@ onUnmounted(() => {
         @order-created="handleOrderCreated"
       />
 
-      <!-- Live Orders & Order History -->
+      <!-- Full-Bleed Live Map Hero when there is an active order and cart is empty -->
+      <LiveOrderMapHero
+        v-if="cart.items.length === 0 && heroOrder"
+        :order="heroOrder"
+        :tracking-info="heroOrder.id === trackingOrderId ? trackingInfo : null"
+      />
+
+      <!-- Live Orders & History Tabs -->
       <section class="space-y-5">
         <div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
           <h2 class="font-display text-lg font-extrabold text-ink">
@@ -308,12 +304,10 @@ onUnmounted(() => {
           />
         </div>
 
-        <!-- Skeletons -->
         <div v-if="loading" class="space-y-4">
           <AppSkeleton v-for="n in 2" :key="n" variant="card" height="190px" />
         </div>
 
-        <!-- Active Orders -->
         <div v-else-if="historyTab === 'active'" class="space-y-4">
           <template v-if="activeOrders.length > 0">
             <OrderTrackingCard
@@ -343,7 +337,6 @@ onUnmounted(() => {
           </AppEmptyState>
         </div>
 
-        <!-- History Orders -->
         <div v-else class="space-y-4">
           <template v-if="pastOrders.length > 0">
             <OrderTrackingCard

@@ -8,6 +8,7 @@ import {
   Menu,
   Moon,
   RefreshCw,
+  Search,
   Shield,
   ShoppingBag,
   Store,
@@ -30,6 +31,7 @@ defineProps<{
 const emit = defineEmits<{
   (e: 'update:activeModule', value: AdminModule): void
   (e: 'refresh'): void
+  (e: 'open-palette'): void
 }>()
 
 const auth = useAuthStore()
@@ -58,7 +60,6 @@ async function handleLogout() {
 
 <template>
   <div class="flex min-h-screen bg-canvas text-ink">
-    <!-- Persistent SaaS Sidebar -->
     <aside class="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 border-r border-line bg-surface">
       <div class="flex h-16 items-center gap-2.5 border-b border-line px-5">
         <span class="flex h-9 w-9 items-center justify-center rounded-xl bg-ink text-canvas shadow-sm">
@@ -131,7 +132,6 @@ async function handleLogout() {
       </div>
     </aside>
 
-    <!-- Main Area -->
     <div class="flex flex-1 flex-col lg:pl-64 min-w-0">
       <header class="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-line bg-surface/90 px-4 backdrop-blur-md sm:px-6">
         <div class="flex items-center gap-3 min-w-0">
@@ -149,12 +149,25 @@ async function handleLogout() {
               {{ navItems.find((i) => i.id === activeModule)?.label || 'Painel Administrativo' }}
             </h1>
             <p class="hidden sm:block text-xs text-ink-muted">
-              Monitoramento executivo, homologações, pedidos e auditoria em tempo real.
+              Monitoramento executivo, homologações, pedidos e auditoria.
             </p>
           </div>
         </div>
 
         <div class="flex items-center gap-2">
+          <!-- Command Palette Trigger -->
+          <button
+            type="button"
+            class="inline-flex h-10 items-center gap-2 rounded-xl border border-line bg-surface-subtle px-3 text-xs font-semibold text-ink-secondary transition hover:border-brand-400 hover:text-ink"
+            @click="emit('open-palette')"
+          >
+            <Search class="h-3.5 w-3.5 text-brand-600" />
+            <span class="hidden sm:inline">Busca rápida</span>
+            <kbd class="hidden md:inline rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-[10px] text-ink-muted">
+              Ctrl K
+            </kbd>
+          </button>
+
           <button
             type="button"
             :disabled="loading"
@@ -162,7 +175,7 @@ async function handleLogout() {
             @click="emit('refresh')"
           >
             <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': loading }" />
-            <span class="hidden sm:inline">Atualizar dados</span>
+            <span class="hidden sm:inline">Atualizar</span>
           </button>
 
           <button
@@ -184,7 +197,6 @@ async function handleLogout() {
       </main>
     </div>
 
-    <!-- Mobile Drawer -->
     <AppDrawer
       :open="mobileNavOpen"
       side="left"

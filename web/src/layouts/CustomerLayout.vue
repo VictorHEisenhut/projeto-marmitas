@@ -28,17 +28,20 @@ import { useAuthStore } from '@/stores/auth'
 import { useCartStore } from '@/stores/cart'
 import { useThemeStore } from '@/stores/theme'
 import { useAddressStore } from '@/stores/address'
+import { useActiveOrderStore } from '@/stores/activeOrder'
 
 const props = withDefaults(
   defineProps<{
     searchQuery?: string
     showSearch?: boolean
     hideFloatingCart?: boolean
+    hideDesktopCartTrigger?: boolean
   }>(),
   {
     searchQuery: '',
     showSearch: false,
     hideFloatingCart: false,
+    hideDesktopCartTrigger: false,
   },
 )
 
@@ -50,6 +53,7 @@ const auth = useAuthStore()
 const cart = useCartStore()
 const theme = useThemeStore()
 const addressStore = useAddressStore()
+const activeOrderStore = useActiveOrderStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -67,6 +71,14 @@ const userInitials = computed(() => {
     .map((p) => p[0]?.toUpperCase())
     .join('')
 })
+
+const showLiveOrderPill = computed(
+  () =>
+    auth.isAuthenticated &&
+    !auth.isDriverOnly &&
+    Boolean(activeOrderStore.primaryActiveOrder) &&
+    route.path !== '/pedidos',
+)
 
 const showFloatingCartBar = computed(
   () =>
@@ -91,6 +103,7 @@ async function handleSelectAddress(id: string) {
 async function handleLogout() {
   userMenuOpen.value = false
   addressStore.reset()
+  activeOrderStore.reset()
   await auth.logout()
   await router.push('/login')
 }
@@ -105,6 +118,9 @@ onMounted(() => {
   theme.initTheme()
   if (auth.isAuthenticated && !auth.isDriverOnly) {
     void addressStore.fetchAddresses()
+    if (auth.hasRole(['customer', 'admin', 'super_admin'])) {
+      void activeOrderStore.refresh()
+    }
   }
   document.addEventListener('click', handleClickOutside)
 })
@@ -115,12 +131,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-canvas text-ink pb-20 md:pb-0">
+  <div class="min-h-screen overflow-x-clip bg-canvas text-ink pb-20 md:pb-0">
     <!-- Sticky Marketplace Header -->
     <header class="sticky top-0 z-30 border-b border-line bg-surface/90 backdrop-blur-md">
-      <div class="mx-auto flex h-16 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
+      <div class="mx-auto flex h-16 max-w-7xl items-center justify-between gap-2 px-3 sm:gap-3 sm:px-6">
         <!-- Left: Logo + Delivery Address Selector -->
-        <div class="flex min-w-0 items-center gap-3 sm:gap-5">
+        <div class="flex flex-1 min-w-0 items-center gap-2 sm:gap-4">
           <RouterLink
             :to="auth.isDriverOnly ? '/entregador' : '/'"
             class="flex shrink-0 items-center gap-2.5 group"
@@ -135,11 +151,11 @@ onUnmounted(() => {
             </span>
           </RouterLink>
 
-          <!-- Address Quick Selector (Customer / Authenticated) -->
+          <!-- Address Quick Selector -->
           <button
             v-if="auth.isAuthenticated && !auth.isDriverOnly"
             type="button"
-            class="flex max-w-[180px] sm:max-w-[240px] items-center gap-1.5 rounded-xl border border-line bg-surface-subtle px-2.5 py-1.5 text-left transition hover:border-brand-300 hover:bg-surface-muted"
+            class="flex min-w-0 max-w-full sm:max-w-[230px] items-center gap-1.5 rounded-xl border border-line bg-surface-subtle px-2 py-1.5 sm:px-2.5 text-left transition hover:border-brand-300 hover:bg-surface-muted"
             @click="addressModalOpen = true"
           >
             <MapPin class="h-4 w-4 shrink-0 text-brand-600" />
@@ -218,13 +234,29 @@ onUnmounted(() => {
           />
         </form>
 
-        <!-- Right: Actions (Theme, Notifications, Cart, User) -->
-        <div class="flex shrink-0 items-center gap-2">
+        <!-- Right: Actions (Live Order Pill, Theme, Notifications, Cart, User) -->
+        <div class="flex shrink-0 items-center gap-1.5 sm:gap-2">
+          <!-- Desktop Live Order Pill -->
+          <RouterLink
+            v-if="showLiveOrderPill && activeOrderStore.primaryActiveOrder"
+            to="/pedidos"
+            class="hidden md:inline-flex h-10 items-center gap-2 rounded-xl border border-fresh-300/80 bg-fresh-50/90 px-3 text-xs font-bold text-fresh-900 shadow-xs transition hover:bg-fresh-100 dark:border-fresh-800 dark:bg-fresh-950/60 dark:text-fresh-200"
+          >
+            <span class="h-2 w-2 rounded-full bg-fresh-500 animate-pulse" />
+            <span class="max-w-[140px] truncate">{{ activeOrderStore.statusLabel }}</span>
+            <span
+              v-if="activeOrderStore.primaryActiveOrder.confirmationPin"
+              class="rounded-md bg-surface px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-ink"
+            >
+              PIN {{ activeOrderStore.primaryActiveOrder.confirmationPin }}
+            </span>
+          </RouterLink>
+
           <button
             type="button"
             :title="theme.isDark ? 'Ativar modo claro' : 'Ativar modo escuro'"
             :aria-label="theme.isDark ? 'Ativar modo claro' : 'Ativar modo escuro'"
-            class="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-surface text-ink-secondary transition hover:border-line-strong hover:bg-surface-muted hover:text-ink"
+            class="inline-flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-xl border border-line bg-surface text-ink-secondary transition hover:border-line-strong hover:bg-surface-muted hover:text-ink"
             @click="theme.toggleTheme()"
           >
             <Sun v-if="theme.isDark" class="h-[18px] w-[18px] text-amber-400" />
@@ -238,12 +270,13 @@ onUnmounted(() => {
             v-if="!auth.isDriverOnly"
             type="button"
             aria-label="Abrir sacola"
-            class="relative inline-flex h-10 items-center gap-2 rounded-xl px-3 text-xs font-bold transition"
-            :class="
+            class="relative inline-flex h-9 sm:h-10 items-center gap-1.5 sm:gap-2 rounded-xl px-2.5 sm:px-3 text-xs font-bold transition"
+            :class="[
+              hideDesktopCartTrigger ? 'xl:hidden' : '',
               cart.totalItems > 0
                 ? 'bg-brand-600 text-white shadow-sm shadow-brand-600/25 hover:bg-brand-700'
-                : 'border border-line bg-surface text-ink-secondary hover:bg-surface-muted hover:text-ink'
-            "
+                : 'border border-line bg-surface text-ink-secondary hover:bg-surface-muted hover:text-ink',
+            ]"
             @click="cart.openDrawer()"
           >
             <ShoppingBag class="h-4 w-4" />
@@ -263,7 +296,7 @@ onUnmounted(() => {
             <button
               type="button"
               aria-label="Menu da conta"
-              class="inline-flex h-10 items-center gap-2 rounded-xl border border-line bg-surface pl-1.5 pr-2.5 transition hover:border-line-strong hover:bg-surface-muted"
+              class="inline-flex h-9 sm:h-10 items-center gap-2 rounded-xl border border-line bg-surface px-1.5 sm:pl-1.5 sm:pr-2.5 transition hover:border-line-strong hover:bg-surface-muted"
               @click="userMenuOpen = !userMenuOpen"
             >
               <span
@@ -367,6 +400,26 @@ onUnmounted(() => {
           </template>
         </div>
       </div>
+
+      <!-- Mobile Live Order Compact Strip -->
+      <RouterLink
+        v-if="showLiveOrderPill && activeOrderStore.primaryActiveOrder"
+        to="/pedidos"
+        class="flex md:hidden items-center justify-between gap-2 border-t border-fresh-200/80 bg-fresh-50/90 px-4 py-2 text-xs font-bold text-fresh-900 dark:border-fresh-900/60 dark:bg-fresh-950/50 dark:text-fresh-200"
+      >
+        <span class="flex items-center gap-2 truncate">
+          <span class="h-2 w-2 shrink-0 rounded-full bg-fresh-500 animate-pulse" />
+          <span class="truncate">
+            {{ activeOrderStore.statusLabel }} · {{ activeOrderStore.primaryActiveOrder.restaurantName }}
+          </span>
+        </span>
+        <span
+          v-if="activeOrderStore.primaryActiveOrder.confirmationPin"
+          class="shrink-0 rounded-md bg-surface px-2 py-0.5 font-mono text-[11px] font-extrabold text-ink"
+        >
+          PIN {{ activeOrderStore.primaryActiveOrder.confirmationPin }}
+        </span>
+      </RouterLink>
     </header>
 
     <!-- Main Page Content -->

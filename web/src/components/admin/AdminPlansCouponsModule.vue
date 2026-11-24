@@ -145,7 +145,7 @@ async function handleConfirmDeleteCoupon() {
 </script>
 
 <template>
-  <div class="grid gap-6 lg:grid-cols-2 items-start">
+  <div class="grid grid-cols-1 gap-6 lg:grid-cols-2 items-start">
     <!-- Subscription Plans -->
     <AppCard padding="lg" class="space-y-5">
       <div class="flex items-center gap-2">

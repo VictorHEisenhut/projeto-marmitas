@@ -164,7 +164,7 @@ public class RestaurantsController : ControllerBase
         {
             RestaurantId = id,
             Neighborhood = request.Neighborhood.Trim(),
-            City = string.IsNullOrWhiteSpace(request.City) ? "São Paulo" : request.City.Trim(),
+            City = string.IsNullOrWhiteSpace(request.City) ? "Blumenau" : request.City.Trim(),
             RadiusKm = Math.Max(1.0, request.RadiusKm),
             DeliveryFee = Math.Max(0m, request.DeliveryFee),
             EstimatedMinutes = Math.Max(10, request.EstimatedMinutes),

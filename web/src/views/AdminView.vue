@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import AdminLayout, { type AdminModule } from '@/layouts/AdminLayout.vue'
+import AdminCommandPalette from '@/components/admin/AdminCommandPalette.vue'
 import AdminGlobalFilters from '@/components/admin/AdminGlobalFilters.vue'
 import AdminRestaurantsModule from '@/components/admin/AdminRestaurantsModule.vue'
 import AdminPlansCouponsModule from '@/components/admin/AdminPlansCouponsModule.vue'
@@ -29,6 +30,8 @@ import type {
 const toast = useToastStore()
 
 const activeModule = ref<AdminModule>('restaurantes')
+const paletteOpen = ref(false)
+const focusedItemId = ref<string | null>(null)
 const loading = ref(true)
 
 const stats = ref<AdminDashboard | null>(null)
@@ -49,6 +52,15 @@ const filterRestaurantId = ref('')
 const filterStatus = ref('')
 const filterRegion = ref('')
 const filterPaymentMethod = ref('')
+
+function handlePaletteNavigate(payload: { module: AdminModule; itemId?: string }) {
+  if (!payload.itemId && !paletteOpen.value) {
+    paletteOpen.value = true
+    return
+  }
+  activeModule.value = payload.module
+  focusedItemId.value = payload.itemId || null
+}
 
 async function loadAllData() {
   loading.value = true
@@ -106,6 +118,7 @@ onMounted(() => {
     v-model:active-module="activeModule"
     :loading="loading"
     @refresh="loadAllData"
+    @open-palette="paletteOpen = true"
   >
     <div class="space-y-6">
       <AdminGlobalFilters
@@ -115,6 +128,7 @@ onMounted(() => {
         v-model:filter-region="filterRegion"
         :stats="stats"
         :restaurants="restaurants"
+        :orders="adminOrders"
         :loading="loading"
         @apply="loadAllData"
       />
@@ -128,6 +142,8 @@ onMounted(() => {
         :restaurants="restaurants"
         :categories="categories"
         :users="users"
+        :focused-item-id="focusedItemId"
+        @clear-focus="focusedItemId = null"
         @refresh="loadAllData"
       />
 
@@ -143,12 +159,16 @@ onMounted(() => {
         v-else-if="activeModule === 'usuarios'"
         :users="users"
         :couriers="couriers"
+        :focused-item-id="focusedItemId"
+        @clear-focus="focusedItemId = null"
         @refresh="loadAllData"
       />
 
       <AdminOrdersModule
         v-else-if="activeModule === 'pedidos'"
         :orders="adminOrders"
+        :focused-item-id="focusedItemId"
+        @clear-focus="focusedItemId = null"
         @refresh="loadAllData"
       />
 
@@ -164,5 +184,15 @@ onMounted(() => {
         @refresh="loadAllData"
       />
     </div>
+
+    <AdminCommandPalette
+      :open="paletteOpen"
+      :restaurants="restaurants"
+      :users="users"
+      :couriers="couriers"
+      :orders="adminOrders"
+      @close="paletteOpen = false"
+      @navigate="handlePaletteNavigate"
+    />
   </AdminLayout>
 </template>

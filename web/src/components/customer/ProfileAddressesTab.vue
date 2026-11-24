@@ -36,8 +36,8 @@ const street = ref('')
 const number = ref('')
 const complement = ref('')
 const neighborhood = ref('')
-const city = ref('')
-const state = ref('SP')
+const city = ref('Blumenau')
+const state = ref('SC')
 const isMain = ref(false)
 
 function openNewModal() {
@@ -47,8 +47,8 @@ function openNewModal() {
   number.value = ''
   complement.value = ''
   neighborhood.value = ''
-  city.value = ''
-  state.value = 'SP'
+  city.value = 'Blumenau'
+  state.value = 'SC'
   isMain.value = false
   modalOpen.value = true
 }
@@ -103,7 +103,7 @@ async function handleSaveAddress() {
       complement: complement.value.trim() || null,
       neighborhood: neighborhood.value.trim(),
       city: city.value.trim(),
-      state: state.value.trim().toUpperCase() || 'SP',
+      state: state.value.trim().toUpperCase() || 'SC',
       zipCode: zipCode.value.trim(),
       isMain: isMain.value,
     }
@@ -151,13 +151,13 @@ async function handleConfirmDelete() {
 </script>
 
 <template>
-  <div class="space-y-5">
+  <div class="min-w-0 w-full space-y-5">
     <div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-      <div>
+      <div class="min-w-0">
         <h2 class="font-display text-lg font-extrabold text-ink">Endereços de entrega</h2>
         <p class="text-xs text-ink-muted">Gerencie os locais onde você recebe suas marmitas.</p>
       </div>
-      <AppButton variant="primary" size="sm" @click="openNewModal">
+      <AppButton variant="primary" size="sm" class="w-full sm:w-auto" @click="openNewModal">
         <Plus class="h-4 w-4" />
         Novo endereço
       </AppButton>
@@ -256,11 +256,11 @@ async function handleConfirmDelete() {
       @close="modalOpen = false"
     >
       <form id="address-form" class="space-y-4" @submit.prevent="handleSaveAddress">
-        <div class="flex items-end gap-2">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
           <AppInput
             v-model="zipCode"
             label="CEP"
-            placeholder="00000-000"
+            placeholder="89010-001"
             class="flex-1"
             @blur="handleLookupCep"
           />
@@ -268,6 +268,7 @@ async function handleConfirmDelete() {
             type="button"
             variant="outline"
             size="md"
+            class="w-full sm:w-auto"
             :loading="lookingUpCep"
             @click="handleLookupCep"
           >
@@ -281,20 +282,20 @@ async function handleConfirmDelete() {
             v-model="street"
             label="Rua / Logradouro"
             required
-            placeholder="Av. Paulista"
+            placeholder="Rua XV de Novembro"
             class="sm:col-span-2"
           />
-          <AppInput v-model="number" label="Número" required placeholder="1000" />
+          <AppInput v-model="number" label="Número" required placeholder="450" />
         </div>
 
         <div class="grid gap-3 sm:grid-cols-2">
           <AppInput v-model="complement" label="Complemento" placeholder="Apto 42, Bloco B" />
-          <AppInput v-model="neighborhood" label="Bairro" placeholder="Bela Vista" />
+          <AppInput v-model="neighborhood" label="Bairro" placeholder="Centro" />
         </div>
 
         <div class="grid gap-3 sm:grid-cols-3">
-          <AppInput v-model="city" label="Cidade" required placeholder="São Paulo" class="sm:col-span-2" />
-          <AppInput v-model="state" label="UF" maxlength="2" placeholder="SP" input-class="uppercase" />
+          <AppInput v-model="city" label="Cidade" required placeholder="Blumenau" class="sm:col-span-2" />
+          <AppInput v-model="state" label="UF" maxlength="2" placeholder="SC" input-class="uppercase" />
         </div>
 
         <div class="rounded-xl border border-line bg-surface-subtle p-3.5">

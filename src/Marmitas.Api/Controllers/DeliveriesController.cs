@@ -113,7 +113,7 @@ public class DeliveriesController : ControllerBase
             var restaurantName = "Restaurante Parceiro";
             var restaurantAddress = string.Empty;
             var deliveryNeighborhood = "Centro";
-            var deliveryAddress = "Região Central - São Paulo/SP";
+            var deliveryAddress = "Região Central - Blumenau/SC";
             Restaurant? rest = null;
             Address? mainAddr = null;
 
@@ -262,8 +262,8 @@ public class DeliveriesController : ControllerBase
         var order = await _orders.GetByIdAsync(orderId);
         var restaurant = await _restaurants.GetByIdAsync(order.RestaurantId);
 
-        var lat = restaurant?.Latitude ?? -23.5614;
-        var lon = restaurant?.Longitude ?? -46.6559;
+        var lat = restaurant?.Latitude ?? -26.9194;
+        var lon = restaurant?.Longitude ?? -49.0661;
         var ranked = await _distribution.RankAvailableCouriersAsync(lat, lon);
 
         return Ok(ranked);

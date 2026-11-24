@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Bike, Eye, EyeOff, KeyRound, Lock, ShieldAlert } from 'lucide-vue-next'
+import { Bike, Eye, EyeOff, Lock, ShieldAlert } from 'lucide-vue-next'
 import AuthLayout from '@/layouts/AuthLayout.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppInput from '@/components/ui/AppInput.vue'
+import OtpInput from '@/components/ui/OtpInput.vue'
 import { getErrorMessage } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
@@ -129,19 +130,12 @@ async function handleSubmit() {
       </AppInput>
 
       <!-- Conditional / Expandable MFA Code -->
-      <div v-if="showMfaField" class="rounded-xl border border-line bg-surface-subtle p-3.5 space-y-2 animate-slide-up">
-        <AppInput
-          v-model="mfaCode"
-          label="Código de Autenticação (MFA)"
-          placeholder="000000"
-          maxlength="6"
-          input-class="font-mono tracking-widest"
-          hint="Informe o código de 6 dígitos configurado na sua conta."
-        >
-          <template #prefix>
-            <KeyRound class="h-4 w-4 text-brand-600" />
-          </template>
-        </AppInput>
+      <div v-if="showMfaField" class="rounded-xl border border-line bg-surface-subtle p-3.5 space-y-2.5 animate-slide-up">
+        <div class="space-y-0.5">
+          <label class="block text-xs font-semibold text-ink">Código de Autenticação (MFA)</label>
+          <p class="text-[11px] text-ink-muted">Informe o código de 6 dígitos configurado na sua conta.</p>
+        </div>
+        <OtpInput v-model="mfaCode" :length="6" />
       </div>
 
       <button

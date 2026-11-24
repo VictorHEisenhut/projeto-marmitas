@@ -304,7 +304,7 @@ public class AdminController : ControllerBase
     private static string ExtractRegion(string? address)
     {
         if (string.IsNullOrWhiteSpace(address))
-            return "São Paulo (Centro)";
+            return "Blumenau (Centro)";
 
         var parts = address.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length >= 2)
@@ -314,7 +314,7 @@ public class AdminController : ControllerBase
                 return neighborhoodPart;
         }
 
-        return "São Paulo";
+        return "Blumenau";
     }
 
     private async Task<List<AuditLogItem>> BuildAuditLogsAsync()

@@ -4,7 +4,7 @@ public class DeliveryZone : Entity
 {
     public Guid RestaurantId { get; set; }
     public string Neighborhood { get; set; } = string.Empty;
-    public string City { get; set; } = "São Paulo";
+    public string City { get; set; } = "Blumenau";
     public double RadiusKm { get; set; } = 8.0;
     public decimal DeliveryFee { get; set; } = 6.90m;
     public int EstimatedMinutes { get; set; } = 35;

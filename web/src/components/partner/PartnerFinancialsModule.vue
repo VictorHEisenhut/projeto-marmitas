@@ -1,13 +1,39 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { DollarSign, Percent, ShoppingBag, Wallet } from 'lucide-vue-next'
 import AppCard from '@/components/ui/AppCard.vue'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
 import { formatCurrency } from '@/services/api'
 import type { RestaurantFinancials } from '@/types'
 
-defineProps<{
+const props = defineProps<{
   financials: RestaurantFinancials | null
 }>()
+
+const chartBars = computed(() => {
+  if (!props.financials) return []
+  const max = Math.max(1, props.financials.grossRevenue)
+  return [
+    {
+      label: 'Receita Bruta',
+      value: props.financials.grossRevenue,
+      pct: Math.round((props.financials.grossRevenue / max) * 100),
+      colorClass: 'bg-brand-500',
+    },
+    {
+      label: 'Seu Repasse (90%)',
+      value: props.financials.netRevenue,
+      pct: Math.round((props.financials.netRevenue / max) * 100),
+      colorClass: 'bg-fresh-600',
+    },
+    {
+      label: 'Comissão (10%)',
+      value: props.financials.platformCommission,
+      pct: Math.max(4, Math.round((props.financials.platformCommission / max) * 100)),
+      colorClass: 'bg-amber-400',
+    },
+  ]
+})
 </script>
 
 <template>
@@ -28,15 +54,9 @@ defineProps<{
           <span class="text-xs font-bold uppercase tracking-wider">Receita Bruta</span>
           <DollarSign class="h-5 w-5 text-brand-600" />
         </div>
-      <p class="mt-3 font-display text-3xl font-extrabold text-ink tabular-nums">
-        {{ formatCurrency(financials.grossRevenue) }}
-      </p>
-      <p
-        v-if="financials.subscriptionRevenue && financials.subscriptionRevenue > 0"
-        class="mt-1 text-[11px] font-medium text-fresh-700 dark:text-fresh-400"
-      >
-        Inclui {{ financials.activeSubscriptionsCount ?? 0 }} assinatura(s) ({{ formatCurrency(financials.subscriptionRevenue) }})
-      </p>
+        <p class="mt-3 font-display text-3xl font-extrabold text-ink tabular-nums">
+          {{ formatCurrency(financials.grossRevenue) }}
+        </p>
       </AppCard>
 
       <AppCard padding="md">
@@ -60,18 +80,31 @@ defineProps<{
       </AppCard>
     </div>
 
-    <AppCard padding="lg" class="space-y-3">
-      <h3 class="font-display text-base font-extrabold text-ink">Detalhamento do Repasse</h3>
-      <p class="text-xs text-ink-secondary">
-        A taxa da plataforma é de 10% sobre o volume bruto de pedidos válidos. O valor líquido (90%) fica disponível para repasse via chave PIX cadastrada nas configurações da loja.
-      </p>
-      <div class="h-3 w-full overflow-hidden rounded-full bg-surface-muted flex">
-        <div class="h-full bg-fresh-600" style="width: 90%" title="Receita líquida (90%)" />
-        <div class="h-full bg-amber-400" style="width: 10%" title="Comissão plataforma (10%)" />
+    <!-- Visual Comparative Chart + Payout Breakdown -->
+    <AppCard padding="lg" class="space-y-5">
+      <div>
+        <h3 class="font-display text-base font-extrabold text-ink">Composição Financeira & Repasse</h3>
+        <p class="text-xs text-ink-muted">
+          Comparativo proporcional entre volume bruto de pedidos, comissão de 10% e repasse líquido via PIX.
+        </p>
       </div>
-      <div class="flex justify-between text-xs font-semibold">
-        <span class="text-fresh-700 dark:text-fresh-400">90% Seu Repasse ({{ formatCurrency(financials.netRevenue) }})</span>
-        <span class="text-amber-700 dark:text-amber-400">10% Plataforma ({{ formatCurrency(financials.platformCommission) }})</span>
+
+      <div class="space-y-3.5">
+        <div v-for="bar in chartBars" :key="bar.label" class="space-y-1.5">
+          <div class="flex items-center justify-between text-xs">
+            <span class="font-bold text-ink">{{ bar.label }}</span>
+            <span class="font-display font-extrabold text-ink tabular-nums">
+              {{ formatCurrency(bar.value) }}
+            </span>
+          </div>
+          <div class="h-3 w-full overflow-hidden rounded-full bg-surface-muted">
+            <div
+              class="h-full rounded-full transition-all duration-500"
+              :class="bar.colorClass"
+              :style="{ width: `${bar.pct}%` }"
+            />
+          </div>
+        </div>
       </div>
     </AppCard>
   </div>

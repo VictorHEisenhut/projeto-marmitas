@@ -30,8 +30,8 @@ const street = ref('')
 const number = ref('')
 const complement = ref('')
 const neighborhood = ref('')
-const city = ref('')
-const state = ref('SP')
+const city = ref('Blumenau')
+const state = ref('SC')
 const openingHours = ref('Seg a Sáb das 10:30 às 15:30')
 const deliveryFee = ref(0)
 const deliveryRadiusKm = ref(8)
@@ -61,8 +61,8 @@ watch(
     number.value = r.addressNumber || ''
     complement.value = r.addressComplement || ''
     neighborhood.value = r.addressNeighborhood || ''
-    city.value = r.addressCity || ''
-    state.value = r.addressState || 'SP'
+    city.value = r.addressCity || 'Blumenau'
+    state.value = r.addressState || 'SC'
     openingHours.value = r.openingHours || 'Seg a Sáb das 10:30 às 15:30'
     deliveryFee.value = r.deliveryFee ?? 0
     deliveryRadiusKm.value = r.deliveryRadiusKm ?? 8
@@ -144,7 +144,7 @@ async function handleAddZone() {
   try {
     await api.post(`/restaurantes/${props.restaurant.id}/zonas-entrega`, {
       neighborhood: newZoneNeighborhood.value.trim(),
-      city: city.value || 'São Paulo',
+      city: city.value || 'Blumenau',
       radiusKm: deliveryRadiusKm.value || 8,
       deliveryFee: Number(newZoneFee.value) || 0,
       estimatedMinutes: Number(newZoneMinutes.value) || 30,
@@ -293,7 +293,7 @@ async function handleRemoveStaff(memberId: string) {
 
         <form class="grid grid-cols-12 gap-2 items-end" @submit.prevent="handleAddZone">
           <div class="col-span-5">
-            <AppInput v-model="newZoneNeighborhood" label="Bairro" required placeholder="Pinheiros" />
+            <AppInput v-model="newZoneNeighborhood" label="Bairro" required placeholder="Victor Konder" />
           </div>
           <div class="col-span-3">
             <AppInput v-model.number="newZoneFee" label="Taxa R$" type="number" step="0.1" min="0" />

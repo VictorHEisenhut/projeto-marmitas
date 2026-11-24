@@ -43,8 +43,8 @@ const billingStreet = ref('')
 const billingNumber = ref('')
 const billingComplement = ref('')
 const billingNeighborhood = ref('')
-const billingCity = ref('')
-const billingState = ref('SP')
+const billingCity = ref('Blumenau')
+const billingState = ref('SC')
 const savingBilling = ref(false)
 const lookingUpCep = ref(false)
 
@@ -68,8 +68,8 @@ watch(
     billingNumber.value = b.number || ''
     billingComplement.value = b.complement || ''
     billingNeighborhood.value = b.neighborhood || ''
-    billingCity.value = b.city || ''
-    billingState.value = b.state || 'SP'
+    billingCity.value = b.city || 'Blumenau'
+    billingState.value = b.state || 'SC'
   },
   { immediate: true },
 )

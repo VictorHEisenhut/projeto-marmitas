@@ -24,8 +24,8 @@ const street = ref('')
 const number = ref('')
 const complement = ref('')
 const neighborhood = ref('')
-const city = ref('')
-const state = ref('SP')
+const city = ref('Blumenau')
+const state = ref('SC')
 const saving = ref(false)
 const lookingUpCep = ref(false)
 
@@ -128,14 +128,14 @@ async function handleCreate() {
           </div>
 
           <div class="grid gap-3 sm:grid-cols-4">
-            <AppInput v-model="street" label="Rua / Logradouro" required placeholder="Rua Harmonia" class="sm:col-span-3" />
+            <AppInput v-model="street" label="Rua / Logradouro" required placeholder="Rua XV de Novembro" class="sm:col-span-3" />
             <AppInput v-model="number" label="Número" required placeholder="450" />
           </div>
 
           <div class="grid gap-3 sm:grid-cols-3">
-            <AppInput v-model="neighborhood" label="Bairro" required placeholder="Vila Madalena" />
-            <AppInput v-model="city" label="Cidade" required placeholder="São Paulo" />
-            <AppInput v-model="state" label="UF" required maxlength="2" placeholder="SP" input-class="uppercase" />
+            <AppInput v-model="neighborhood" label="Bairro" required placeholder="Centro" />
+            <AppInput v-model="city" label="Cidade" required placeholder="Blumenau" />
+            <AppInput v-model="state" label="UF" required maxlength="2" placeholder="SC" input-class="uppercase" />
           </div>
 
           <AppInput v-model="complement" label="Complemento (opcional)" placeholder="Loja 1, Fundos" />

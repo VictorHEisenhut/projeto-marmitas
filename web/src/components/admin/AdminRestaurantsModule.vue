@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Plus, Store, Tag, Trash2 } from 'lucide-vue-next'
 import AppCard from '@/components/ui/AppCard.vue'
 import AppButton from '@/components/ui/AppButton.vue'
@@ -8,7 +8,7 @@ import AppDrawer from '@/components/ui/AppDrawer.vue'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
 import AppConfirmDialog from '@/components/ui/AppConfirmDialog.vue'
 import OrderStatusBadge from '@/components/ui/OrderStatusBadge.vue'
-import { api, getErrorMessage } from '@/services/api'
+import { api, formatCurrency, getErrorMessage } from '@/services/api'
 import { useToastStore } from '@/stores/toast'
 import type { Category, Restaurant, User } from '@/types'
 
@@ -16,15 +16,19 @@ const props = defineProps<{
   restaurants: Restaurant[]
   categories: Category[]
   users: User[]
+  focusedItemId?: string | null
 }>()
 
 const emit = defineEmits<{
   (e: 'refresh'): void
+  (e: 'clear-focus'): void
 }>()
 
 const toast = useToastStore()
 
-const drawerOpen = ref(false)
+const createDrawerOpen = ref(false)
+const inspectorRest = ref<Restaurant | null>(null)
+
 const restName = ref('')
 const restDocument = ref('')
 const restDescription = ref('')
@@ -33,8 +37,8 @@ const restZipCode = ref('')
 const restStreet = ref('')
 const restNumber = ref('')
 const restNeighborhood = ref('')
-const restCity = ref('São Paulo')
-const restState = ref('SP')
+const restCity = ref('Blumenau')
+const restState = ref('SC')
 const savingRest = ref(false)
 
 const catName = ref('')
@@ -43,14 +47,33 @@ const savingCat = ref(false)
 const deleteRestTarget = ref<Restaurant | null>(null)
 const deleteCatTarget = ref<Category | null>(null)
 
+watch(
+  () => props.focusedItemId,
+  (id) => {
+    if (!id) return
+    const match = props.restaurants.find((r) => r.id === id)
+    if (match) {
+      inspectorRest.value = match
+      emit('clear-focus')
+    }
+  },
+  { immediate: true },
+)
+
+const inspectorOwner = computed(() => {
+  if (!inspectorRest.value) return ''
+  const found = props.users.find((u) => u.id === inspectorRest.value?.ownerId)
+  return found ? `${found.name} (${found.email})` : inspectorRest.value.ownerId
+})
+
 function openCreateDrawer() {
   restOwnerId.value = props.users[0]?.id || ''
-  drawerOpen.value = true
+  createDrawerOpen.value = true
 }
 
-function getOwnerName(ownerId: string): string {
+function getOwnerShort(ownerId: string): string {
   const found = props.users.find((u) => u.id === ownerId)
-  return found ? `${found.name} (${found.email})` : ownerId
+  return found ? found.name : ownerId.slice(0, 8)
 }
 
 async function handleCreateRestaurant() {
@@ -66,17 +89,17 @@ async function handleCreateRestaurant() {
       document: restDocument.value.trim(),
       description: restDescription.value.trim(),
       ownerId: restOwnerId.value || undefined,
-      addressZipCode: restZipCode.value.trim() || '01001-000',
-      addressStreet: restStreet.value.trim() || 'Av. Paulista',
-      addressNumber: restNumber.value.trim() || '1000',
-      addressNeighborhood: restNeighborhood.value.trim() || 'Bela Vista',
-      addressCity: restCity.value.trim() || 'São Paulo',
-      addressState: restState.value.trim().toUpperCase() || 'SP',
+      addressZipCode: restZipCode.value.trim() || '89010-001',
+      addressStreet: restStreet.value.trim() || 'Rua XV de Novembro',
+      addressNumber: restNumber.value.trim() || '450',
+      addressNeighborhood: restNeighborhood.value.trim() || 'Centro',
+      addressCity: restCity.value.trim() || 'Blumenau',
+      addressState: restState.value.trim().toUpperCase() || 'SC',
     })
     restName.value = ''
     restDocument.value = ''
     restDescription.value = ''
-    drawerOpen.value = false
+    createDrawerOpen.value = false
     toast.success('Restaurante cadastrado e aprovado!')
     emit('refresh')
   } catch (err) {
@@ -89,6 +112,9 @@ async function handleCreateRestaurant() {
 async function handleChangeStatus(id: string, status: string) {
   try {
     await api.patch(`/restaurantes/${id}/status`, { status })
+    if (inspectorRest.value && inspectorRest.value.id === id) {
+      inspectorRest.value.status = status
+    }
     toast.success(`Restaurante atualizado para ${status}.`)
     emit('refresh')
   } catch (err) {
@@ -100,6 +126,9 @@ async function handleConfirmDeleteRest() {
   if (!deleteRestTarget.value) return
   try {
     await api.delete(`/restaurantes/${deleteRestTarget.value.id}`)
+    if (inspectorRest.value?.id === deleteRestTarget.value.id) {
+      inspectorRest.value = null
+    }
     deleteRestTarget.value = null
     toast.info('Restaurante removido.')
     emit('refresh')
@@ -140,15 +169,15 @@ async function handleConfirmDeleteCat() {
 </script>
 
 <template>
-  <div class="grid gap-6 lg:grid-cols-3 items-start">
-    <!-- Restaurants List -->
+  <div class="grid grid-cols-1 gap-6 lg:grid-cols-3 items-start">
+    <!-- Master Table of Restaurants -->
     <AppCard padding="lg" class="lg:col-span-2 space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 class="font-display text-base font-extrabold text-ink">
             Restaurantes Cadastrados ({{ restaurants.length }})
           </h2>
-          <p class="text-xs text-ink-muted">Aprove, pause ou cadastre novos parceiros.</p>
+          <p class="text-xs text-ink-muted">Clique em qualquer linha para abrir o Inspector de detalhes e ações.</p>
         </div>
         <AppButton variant="primary" size="sm" @click="openCreateDrawer">
           <Plus class="h-4 w-4" />
@@ -156,52 +185,32 @@ async function handleConfirmDeleteCat() {
         </AppButton>
       </div>
 
-      <div v-if="restaurants.length > 0" class="space-y-3">
-        <div
-          v-for="rest in restaurants"
-          :key="rest.id"
-          class="flex flex-col justify-between gap-3 rounded-2xl border border-line bg-surface-subtle p-4 sm:flex-row sm:items-center"
-        >
-          <div class="min-w-0 space-y-1">
-            <div class="flex flex-wrap items-center gap-2">
-              <h3 class="font-display text-sm font-extrabold text-ink">{{ rest.name }}</h3>
-              <OrderStatusBadge :status="rest.status" />
-            </div>
-            <p class="text-xs text-ink-muted truncate">
-              CNPJ: {{ rest.document }} · Dono: {{ getOwnerName(rest.ownerId) }}
-            </p>
-            <p v-if="rest.description" class="text-xs text-ink-secondary line-clamp-1">
-              {{ rest.description }}
-            </p>
-          </div>
-
-          <div class="flex shrink-0 items-center gap-2">
-            <AppButton
-              v-if="rest.status !== 'Approved'"
-              variant="fresh"
-              size="xs"
-              @click="handleChangeStatus(rest.id, 'Approved')"
+      <div v-if="restaurants.length > 0" class="overflow-x-auto rounded-2xl border border-line">
+        <table class="w-full text-left text-xs">
+          <thead class="border-b border-line bg-surface-subtle text-[11px] font-bold uppercase tracking-wider text-ink-muted">
+            <tr>
+              <th class="px-4 py-3">Restaurante</th>
+              <th class="px-4 py-3">CNPJ</th>
+              <th class="px-4 py-3 hidden sm:table-cell">Proprietário</th>
+              <th class="px-4 py-3">Status</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-line">
+            <tr
+              v-for="rest in restaurants"
+              :key="rest.id"
+              class="cursor-pointer transition hover:bg-surface-muted/60"
+              @click="inspectorRest = rest"
             >
-              Aprovar
-            </AppButton>
-            <AppButton
-              v-if="rest.status === 'Approved'"
-              variant="outline"
-              size="xs"
-              @click="handleChangeStatus(rest.id, 'Rejected')"
-            >
-              Pausar
-            </AppButton>
-            <button
-              type="button"
-              aria-label="Remover restaurante"
-              class="rounded-lg border border-red-200 p-1.5 text-red-600 hover:bg-red-50 dark:border-red-900/60 dark:text-red-400"
-              @click="deleteRestTarget = rest"
-            >
-              <Trash2 class="h-4 w-4" />
-            </button>
-          </div>
-        </div>
+              <td class="px-4 py-3 font-bold text-ink">{{ rest.name }}</td>
+              <td class="px-4 py-3 font-mono text-ink-secondary">{{ rest.document }}</td>
+              <td class="px-4 py-3 hidden sm:table-cell text-ink-secondary">{{ getOwnerShort(rest.ownerId) }}</td>
+              <td class="px-4 py-3">
+                <OrderStatusBadge :status="rest.status" />
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
       <AppEmptyState v-else :icon="Store" title="Nenhum restaurante encontrado" />
@@ -246,13 +255,74 @@ async function handleConfirmDeleteCat() {
       </ul>
     </AppCard>
 
+    <!-- Restaurant Detail Inspector Drawer -->
+    <AppDrawer
+      :open="Boolean(inspectorRest)"
+      :title="inspectorRest?.name"
+      :subtitle="`CNPJ: ${inspectorRest?.document}`"
+      width-class="max-w-md"
+      @close="inspectorRest = null"
+    >
+      <div v-if="inspectorRest" class="space-y-5 text-xs">
+        <div class="flex items-center justify-between rounded-2xl border border-line bg-surface-subtle p-4">
+          <span class="font-bold text-ink-secondary">Status na Vitrine</span>
+          <OrderStatusBadge :status="inspectorRest.status" />
+        </div>
+
+        <div class="space-y-2 rounded-2xl border border-line bg-surface-subtle p-4">
+          <p class="font-bold uppercase tracking-wider text-[10px] text-ink-muted">Dados & Endereço</p>
+          <p class="text-ink-secondary"><strong class="text-ink">Proprietário:</strong> {{ inspectorOwner }}</p>
+          <p class="text-ink-secondary"><strong class="text-ink">Descrição:</strong> {{ inspectorRest.description || 'N/A' }}</p>
+          <p class="text-ink-secondary">
+            <strong class="text-ink">Endereço:</strong>
+            {{ inspectorRest.addressStreet || 'N/A' }}, {{ inspectorRest.addressNumber }} —
+            {{ inspectorRest.addressNeighborhood }} ({{ inspectorRest.addressCity }}/{{ inspectorRest.addressState }})
+          </p>
+          <p class="text-ink-secondary">
+            <strong class="text-ink">Taxa base:</strong> {{ formatCurrency(inspectorRest.deliveryFee ?? 0) }}
+            · <strong class="text-ink">Raio:</strong> {{ inspectorRest.deliveryRadiusKm ?? 8 }} km
+          </p>
+        </div>
+
+        <div class="space-y-2 pt-2">
+          <AppButton
+            v-if="inspectorRest.status !== 'Approved'"
+            variant="fresh"
+            size="md"
+            block
+            @click="handleChangeStatus(inspectorRest.id, 'Approved')"
+          >
+            Aprovar restaurante
+          </AppButton>
+          <AppButton
+            v-if="inspectorRest.status === 'Approved'"
+            variant="outline"
+            size="md"
+            block
+            @click="handleChangeStatus(inspectorRest.id, 'Rejected')"
+          >
+            Pausar restaurante
+          </AppButton>
+          <AppButton
+            variant="danger"
+            size="md"
+            block
+            @click="deleteRestTarget = inspectorRest"
+          >
+            <Trash2 class="h-4 w-4" />
+            Remover restaurante
+          </AppButton>
+        </div>
+      </div>
+    </AppDrawer>
+
     <!-- Create Restaurant Drawer -->
     <AppDrawer
-      :open="drawerOpen"
+      :open="createDrawerOpen"
       title="Cadastrar Restaurante"
       subtitle="Novo parceiro já entra aprovado na vitrine."
       width-class="max-w-md"
-      @close="drawerOpen = false"
+      @close="createDrawerOpen = false"
     >
       <form id="admin-rest-form" class="space-y-4" @submit.prevent="handleCreateRestaurant">
         <AppInput v-model="restName" label="Nome do restaurante" required placeholder="Marmitaria Central" />
@@ -268,10 +338,10 @@ async function handleConfirmDeleteCat() {
         </div>
         <AppInput v-model="restDescription" label="Descrição" placeholder="Especialidade da cozinha" />
         <div class="grid grid-cols-2 gap-3">
-          <AppInput v-model="restZipCode" label="CEP" placeholder="01001-000" />
-          <AppInput v-model="restNumber" label="Número" placeholder="100" />
+          <AppInput v-model="restZipCode" label="CEP" placeholder="89010-001" />
+          <AppInput v-model="restNumber" label="Número" placeholder="450" />
         </div>
-        <AppInput v-model="restStreet" label="Rua / Logradouro" placeholder="Av. Paulista" />
+        <AppInput v-model="restStreet" label="Rua / Logradouro" placeholder="Rua XV de Novembro" />
         <div class="grid grid-cols-3 gap-2">
           <AppInput v-model="restNeighborhood" label="Bairro" placeholder="Centro" />
           <AppInput v-model="restCity" label="Cidade" />
@@ -281,7 +351,7 @@ async function handleConfirmDeleteCat() {
 
       <template #footer>
         <div class="flex justify-end gap-2">
-          <AppButton variant="outline" size="sm" @click="drawerOpen = false">Cancelar</AppButton>
+          <AppButton variant="outline" size="sm" @click="createDrawerOpen = false">Cancelar</AppButton>
           <AppButton type="submit" form="admin-rest-form" variant="primary" size="sm" :loading="savingRest">
             Cadastrar restaurante
           </AppButton>

@@ -38,8 +38,8 @@ public class DeliveryDistributionService : IDeliveryDistributionService
 
         foreach (var courier in couriers.Where(c => c.IsAvailable && string.Equals(c.Status, "Approved", StringComparison.OrdinalIgnoreCase)))
         {
-            var courierLat = courier.Latitude ?? -23.5614;
-            var courierLon = courier.Longitude ?? -46.6559;
+            var courierLat = courier.Latitude ?? -26.9194;
+            var courierLon = courier.Longitude ?? -49.0661;
             var distanceKm = GeoCalculator.CalculateDistanceKm(restaurantLat, restaurantLon, courierLat, courierLon);
 
             var activeCount = allDeliveries.Count(d =>

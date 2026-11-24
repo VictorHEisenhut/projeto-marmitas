@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Eye, EyeOff, KeyRound } from 'lucide-vue-next'
+import { Eye, EyeOff } from 'lucide-vue-next'
 import AuthLayout from '@/layouts/AuthLayout.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppInput from '@/components/ui/AppInput.vue'
+import OtpInput from '@/components/ui/OtpInput.vue'
 import { api, getErrorMessage } from '@/services/api'
 import { useToastStore } from '@/stores/toast'
 
@@ -84,18 +85,10 @@ async function handleSubmit() {
         placeholder="seu@email.com"
       />
 
-      <AppInput
-        v-model="resetCode"
-        label="Código de verificação (6 dígitos)"
-        maxlength="10"
-        required
-        placeholder="000000"
-        input-class="font-mono text-base tracking-[0.25em] font-bold"
-      >
-        <template #prefix>
-          <KeyRound class="h-4 w-4 text-brand-600" />
-        </template>
-      </AppInput>
+      <div class="space-y-1.5">
+        <label class="block text-xs font-semibold text-ink">Código de verificação (6 dígitos)</label>
+        <OtpInput v-model="resetCode" :length="6" />
+      </div>
 
       <AppInput
         v-model="newPassword"

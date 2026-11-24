@@ -167,7 +167,7 @@ public class DomainBusinessRulesTests
     [Fact]
     public void GeoCalculator_DistanciaHaversineETaxa_DeveRetornarValoresConsistentes()
     {
-        var distanceKm = GeoCalculator.CalculateDistanceKm(-23.5614, -46.6559, -23.5890, -46.6365);
+        var distanceKm = GeoCalculator.CalculateDistanceKm(-26.9194, -49.0661, -26.8856, -49.0731);
         var fee = GeoCalculator.CalculateDeliveryFee(distanceKm);
 
         Assert.True(distanceKm > 2.5 && distanceKm < 5.0);
@@ -175,12 +175,20 @@ public class DomainBusinessRulesTests
     }
 
     [Fact]
+    public void GeoCalculator_LocalizacaoBase_DeveSerBlumenauSC()
+    {
+        var fallbackPoint = GeoCalculator.ResolveAddressCoordinates(null, null, "Rua Sem Coordenadas, Blumenau/SC");
+        Assert.InRange(fallbackPoint.Latitude, -27.1, -26.7);
+        Assert.InRange(fallbackPoint.Longitude, -49.2, -48.9);
+    }
+
+    [Fact]
     public void GeoCalculator_TempoEstimadoComOutrasParadas_DeveSomarTempoEDistanciaDasParadas()
     {
-        var restaurant = new GeoPoint(-23.5535, -46.6902, "Restaurante");
-        var customer = new GeoPoint(-23.5890, -46.6365, "Casa do Cliente");
-        var stop1 = new GeoPoint(-23.5661, -46.6805, "Parada 1");
-        var stop2 = new GeoPoint(-23.5594, -46.6468, "Parada 2");
+        var restaurant = new GeoPoint(-26.9194, -49.0661, "Restaurante");
+        var customer = new GeoPoint(-26.8856, -49.0731, "Casa do Cliente");
+        var stop1 = new GeoPoint(-26.9068, -49.0772, "Parada 1");
+        var stop2 = new GeoPoint(-26.9094, -49.0867, "Parada 2");
 
         var directEta = GeoCalculator.EstimateDeliveryEta(restaurant, customer, "InTransit", restaurant);
         var multiStopEta = GeoCalculator.EstimateDeliveryEta(

@@ -15,7 +15,7 @@ import AppButton from '@/components/ui/AppButton.vue'
 import AppBadge from '@/components/ui/AppBadge.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import AppToggle from '@/components/ui/AppToggle.vue'
-import AppDrawer from '@/components/ui/AppDrawer.vue'
+import AppModal from '@/components/ui/AppModal.vue'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
 import AppConfirmDialog from '@/components/ui/AppConfirmDialog.vue'
 import { api, formatCurrency, getErrorMessage, uploadFile } from '@/services/api'
@@ -39,8 +39,8 @@ const searchQuery = ref('')
 const categoryFilter = ref('')
 const statusFilter = ref<'all' | 'active' | 'paused'>('all')
 
-// Drawer Form State
-const drawerOpen = ref(false)
+// Split-View Modal State
+const editorOpen = ref(false)
 const editingProductId = ref<string | null>(null)
 const productName = ref('')
 const productDescription = ref('')
@@ -58,6 +58,10 @@ const generatingWithAi = ref(false)
 const aiNutrition = ref<NutritionalEstimate | null>(null)
 const savingProduct = ref(false)
 const deleteTarget = ref<Product | null>(null)
+
+const previewCategoryName = computed(
+  () => props.categories.find((c) => c.id === productCategoryId.value)?.name || 'Marmita',
+)
 
 const filteredProducts = computed(() => {
   let list = [...props.products]
@@ -80,7 +84,7 @@ const filteredProducts = computed(() => {
   return list
 })
 
-function openCreateDrawer() {
+function openCreateEditor() {
   editingProductId.value = null
   productName.value = ''
   productDescription.value = ''
@@ -93,10 +97,10 @@ function openCreateDrawer() {
   cutleryPrice.value = null
   productAddons.value = []
   aiNutrition.value = null
-  drawerOpen.value = true
+  editorOpen.value = true
 }
 
-function openEditDrawer(product: Product) {
+function openEditEditor(product: Product) {
   editingProductId.value = product.id
   productName.value = product.name
   productDescription.value = product.description || ''
@@ -113,7 +117,7 @@ function openEditDrawer(product: Product) {
     maxQuantity: a.maxQuantity,
   }))
   aiNutrition.value = null
-  drawerOpen.value = true
+  editorOpen.value = true
 }
 
 function addAddonRow() {
@@ -224,7 +228,7 @@ async function handleSaveProduct() {
       toast.success('Nova marmita adicionada ao cardápio!')
     }
 
-    drawerOpen.value = false
+    editorOpen.value = false
     emit('refresh')
   } catch (err) {
     toast.error(getErrorMessage(err, 'Não foi possível salvar a marmita.'))
@@ -260,7 +264,6 @@ async function handleConfirmDelete() {
 
 <template>
   <div class="space-y-5">
-    <!-- Top Controls Bar -->
     <div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
       <div class="flex flex-1 flex-wrap items-center gap-2">
         <div class="relative flex-1 min-w-[200px] max-w-xs">
@@ -291,13 +294,12 @@ async function handleConfirmDelete() {
         </select>
       </div>
 
-      <AppButton variant="primary" size="md" @click="openCreateDrawer">
+      <AppButton variant="primary" size="md" @click="openCreateEditor">
         <Plus class="h-4 w-4" />
         Nova marmita
       </AppButton>
     </div>
 
-    <!-- Dish List -->
     <div v-if="filteredProducts.length > 0" class="grid gap-4 md:grid-cols-2">
       <AppCard
         v-for="product in filteredProducts"
@@ -351,7 +353,7 @@ async function handleConfirmDelete() {
             </span>
 
             <div class="flex items-center gap-1.5">
-              <AppButton variant="outline" size="xs" @click="openEditDrawer(product)">
+              <AppButton variant="outline" size="xs" @click="openEditEditor(product)">
                 <Edit3 class="h-3.5 w-3.5" />
                 Editar
               </AppButton>
@@ -376,237 +378,276 @@ async function handleConfirmDelete() {
       description="Cadastre pratos com fotos apetitosas e use a IA do Gemini para gerar descrições irresistíveis."
     >
       <template #action>
-        <AppButton variant="primary" size="sm" @click="openCreateDrawer">
+        <AppButton variant="primary" size="sm" @click="openCreateEditor">
           <Plus class="h-4 w-4" />
           Cadastrar primeira marmita
         </AppButton>
       </template>
     </AppEmptyState>
 
-    <!-- Create / Edit Dish Slide-Over Drawer -->
-    <AppDrawer
-      :open="drawerOpen"
+    <!-- Split-View Create / Edit Modal with Real-Time Customer Card Preview -->
+    <AppModal
+      :open="editorOpen"
       :title="editingProductId ? 'Editar Marmita' : 'Nova Marmita'"
-      subtitle="Configure foto, preço, elegibilidade em planos, extras e otimize com IA."
-      width-class="max-w-lg"
-      @close="drawerOpen = false"
+      subtitle="Edite os campos à esquerda e visualize como o cliente verá no aplicativo à direita."
+      max-width="2xl"
+      @close="editorOpen = false"
     >
-      <form id="dish-drawer-form" class="space-y-4" @submit.prevent="handleSaveProduct">
-        <!-- Image Upload + Preview -->
-        <div class="space-y-2">
-          <label class="block text-xs font-semibold text-ink-secondary">Foto da marmita</label>
-          <div class="flex items-center gap-3">
-            <div class="h-20 w-20 shrink-0 overflow-hidden rounded-2xl border border-line bg-surface-muted flex items-center justify-center">
-              <img v-if="productImageUrl" :src="productImageUrl" alt="Preview" class="h-full w-full object-cover" />
-              <UtensilsCrossed v-else class="h-6 w-6 text-ink-muted" />
-            </div>
-            <div class="flex-1 space-y-2">
-              <input
-                v-model="productImageUrl"
-                type="text"
-                placeholder="URL da foto ou envie um arquivo abaixo"
-                class="w-full rounded-xl border border-line-strong bg-surface px-3 py-2 text-xs text-ink"
-              />
-              <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-line-strong bg-surface-subtle px-3 py-1.5 text-xs font-bold text-ink-secondary hover:bg-surface-muted">
-                <Upload class="h-3.5 w-3.5" />
-                <span>{{ uploadingImage ? 'Enviando foto...' : 'Enviar imagem' }}</span>
-                <input type="file" accept=".jpg,.jpeg,.png,.webp" class="hidden" @change="handleUploadImage" />
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <div class="grid gap-3 sm:grid-cols-2">
-          <div class="space-y-1.5">
-            <label class="block text-xs font-semibold text-ink-secondary">Categoria *</label>
-            <select
-              v-model="productCategoryId"
-              required
-              class="w-full rounded-xl border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink"
-            >
-              <option value="" disabled>Selecione...</option>
-              <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
-            </select>
-          </div>
-
-          <AppInput
-            v-model.number="productPrice"
-            label="Valor avulso (R$)"
-            type="number"
-            step="0.01"
-            min="0.01"
-            required
-            placeholder="24.90"
-          />
-        </div>
-
-        <!-- Dish Name + Gemini AI Optimizer -->
-        <div class="space-y-1.5">
-          <div class="flex items-center justify-between gap-2">
-            <label class="block text-xs font-semibold text-ink-secondary">
-              Nome do prato ou ingredientes *
-            </label>
-            <button
-              type="button"
-              :disabled="generatingWithAi || !productName.trim()"
-              class="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-brand-600 to-amber-500 px-2.5 py-1 text-[11px] font-bold text-white shadow-xs transition hover:brightness-110 disabled:opacity-45"
-              @click="handleOptimizeWithAi"
-            >
-              <Loader2 v-if="generatingWithAi" class="h-3.5 w-3.5 animate-spin" />
-              <Sparkles v-else class="h-3.5 w-3.5" />
-              <span>{{ generatingWithAi ? 'Otimizando...' : 'Otimizar com IA (Gemini)' }}</span>
-            </button>
-          </div>
-          <input
-            v-model="productName"
-            type="text"
-            required
-            placeholder="Ex: Frango grelhado com batata doce e brócolis"
-            class="w-full rounded-xl border border-line-strong bg-surface px-3.5 py-2.5 text-sm text-ink focus:border-brand-600 focus:outline-none"
-          />
-        </div>
-
-        <div class="space-y-1.5">
-          <label class="block text-xs font-semibold text-ink-secondary">Descrição *</label>
-          <textarea
-            v-model="productDescription"
-            rows="3"
-            required
-            placeholder="Ingredientes, acompanhamentos e temperos..."
-            class="w-full rounded-xl border border-line-strong bg-surface px-3.5 py-2.5 text-sm text-ink focus:border-brand-600 focus:outline-none"
-          />
-        </div>
-
-        <!-- AI Nutritional Estimate Preview -->
-        <div
-          v-if="aiNutrition"
-          class="rounded-2xl border border-amber-200 bg-amber-50/70 p-3.5 text-xs dark:border-amber-800/60 dark:bg-amber-950/30"
-        >
-          <div class="flex items-center gap-1.5 font-bold text-amber-900 dark:text-amber-300">
-            <Sparkles class="h-4 w-4 text-brand-600" />
-            <span>Estimativa Nutricional (Gemini IA)</span>
-          </div>
-          <div class="mt-2 grid grid-cols-4 gap-2 text-center">
-            <div class="rounded-lg bg-surface p-1.5 border border-line">
-              <p class="text-[10px] text-ink-muted">Calorias</p>
-              <p class="font-bold text-amber-700 dark:text-amber-400">~{{ aiNutrition.calories }}</p>
-            </div>
-            <div class="rounded-lg bg-surface p-1.5 border border-line">
-              <p class="text-[10px] text-ink-muted">Proteína</p>
-              <p class="font-bold text-fresh-700 dark:text-fresh-400">{{ aiNutrition.protein }}g</p>
-            </div>
-            <div class="rounded-lg bg-surface p-1.5 border border-line">
-              <p class="text-[10px] text-ink-muted">Carbs</p>
-              <p class="font-bold text-ink">{{ aiNutrition.carbs }}g</p>
-            </div>
-            <div class="rounded-lg bg-surface p-1.5 border border-line">
-              <p class="text-[10px] text-ink-muted">Gordura</p>
-              <p class="font-bold text-ink">{{ aiNutrition.fat }}g</p>
+      <div class="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
+        <!-- Left: Form -->
+        <form id="dish-editor-form" class="space-y-4 lg:col-span-7" @submit.prevent="handleSaveProduct">
+          <div class="space-y-2">
+            <label class="block text-xs font-semibold text-ink-secondary">Foto da marmita</label>
+            <div class="flex items-center gap-3">
+              <div class="h-16 w-16 shrink-0 overflow-hidden rounded-2xl border border-line bg-surface-muted flex items-center justify-center">
+                <img v-if="productImageUrl" :src="productImageUrl" alt="Preview" class="h-full w-full object-cover" />
+                <UtensilsCrossed v-else class="h-5 w-5 text-ink-muted" />
+              </div>
+              <div class="flex-1 space-y-1.5">
+                <input
+                  v-model="productImageUrl"
+                  type="text"
+                  placeholder="URL da foto ou envie um arquivo"
+                  class="w-full rounded-xl border border-line-strong bg-surface px-3 py-2 text-xs text-ink"
+                />
+                <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-line-strong bg-surface-subtle px-3 py-1 text-xs font-bold text-ink-secondary hover:bg-surface-muted">
+                  <Upload class="h-3.5 w-3.5" />
+                  <span>{{ uploadingImage ? 'Enviando...' : 'Upload de foto' }}</span>
+                  <input type="file" accept=".jpg,.jpeg,.png,.webp" class="hidden" @change="handleUploadImage" />
+                </label>
+              </div>
             </div>
           </div>
-        </div>
 
-        <!-- Plan Eligibility -->
-        <div class="rounded-2xl border border-line bg-surface-subtle p-3.5">
-          <AppToggle
-            v-model="availableInPlans"
-            active-color="fresh"
-            label="Disponível em Planos Mensais"
-            description="Permite que assinantes resgatem este prato sem custo base."
-          />
-        </div>
-
-        <!-- Cutlery Config -->
-        <div class="rounded-2xl border border-line bg-surface-subtle p-3.5 space-y-3">
-          <AppToggle
-            v-model="allowsCutlery"
-            label="Oferecer opção de talheres?"
-            description="O cliente poderá escolher se deseja talheres no pedido."
-          />
-          <div v-if="allowsCutlery" class="space-y-2.5 border-t border-line pt-3">
-            <div class="flex gap-4 text-xs font-semibold text-ink">
-              <label class="inline-flex items-center gap-1.5 cursor-pointer">
-                <input v-model="cutleryHasExtraCost" type="radio" :value="false" class="accent-brand-600" />
-                Gratuito
-              </label>
-              <label class="inline-flex items-center gap-1.5 cursor-pointer">
-                <input v-model="cutleryHasExtraCost" type="radio" :value="true" class="accent-brand-600" />
-                Com custo extra
-              </label>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div class="space-y-1.5">
+              <label class="block text-xs font-semibold text-ink-secondary">Categoria *</label>
+              <select
+                v-model="productCategoryId"
+                required
+                class="w-full rounded-xl border border-line-strong bg-surface px-3 py-2.5 text-sm text-ink"
+              >
+                <option value="" disabled>Selecione...</option>
+                <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+              </select>
             </div>
+
             <AppInput
-              v-if="cutleryHasExtraCost"
-              v-model.number="cutleryPrice"
-              label="Valor do talher (R$)"
+              v-model.number="productPrice"
+              label="Valor avulso (R$)"
               type="number"
               step="0.01"
               min="0.01"
               required
-              placeholder="1.50"
+              placeholder="24.90"
             />
           </div>
-        </div>
 
-        <!-- Addons Builder -->
-        <div class="rounded-2xl border border-line bg-surface-subtle p-3.5 space-y-3">
-          <div class="flex items-center justify-between">
-            <span class="text-xs font-bold text-ink">Adicionais / Extras</span>
-            <AppButton type="button" variant="outline" size="xs" @click="addAddonRow">
-              <Plus class="h-3.5 w-3.5" />
-              Adicionar extra
-            </AppButton>
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between gap-2">
+              <label class="block text-xs font-semibold text-ink-secondary">Nome ou ingredientes *</label>
+              <button
+                type="button"
+                :disabled="generatingWithAi || !productName.trim()"
+                class="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-brand-600 to-amber-500 px-2.5 py-1 text-[11px] font-bold text-white shadow-xs transition hover:brightness-110 disabled:opacity-45"
+                @click="handleOptimizeWithAi"
+              >
+                <Loader2 v-if="generatingWithAi" class="h-3.5 w-3.5 animate-spin" />
+                <Sparkles v-else class="h-3.5 w-3.5" />
+                <span>{{ generatingWithAi ? 'Otimizando...' : 'Otimizar com IA (Gemini)' }}</span>
+              </button>
+            </div>
+            <input
+              v-model="productName"
+              type="text"
+              required
+              placeholder="Ex: Frango grelhado com batata doce e brócolis"
+              class="w-full rounded-xl border border-line-strong bg-surface px-3.5 py-2.5 text-sm text-ink focus:border-brand-600 focus:outline-none"
+            />
+          </div>
+
+          <div class="space-y-1.5">
+            <label class="block text-xs font-semibold text-ink-secondary">Descrição *</label>
+            <textarea
+              v-model="productDescription"
+              rows="3"
+              required
+              placeholder="Ingredientes, acompanhamentos e temperos..."
+              class="w-full rounded-xl border border-line-strong bg-surface px-3.5 py-2.5 text-sm text-ink focus:border-brand-600 focus:outline-none"
+            />
           </div>
 
           <div
-            v-for="(addon, idx) in productAddons"
-            :key="idx"
-            class="rounded-xl border border-line bg-surface p-3 space-y-2"
+            v-if="aiNutrition"
+            class="rounded-2xl border border-amber-200 bg-amber-50/70 p-3 text-xs dark:border-amber-800/60 dark:bg-amber-950/30"
           >
-            <div class="flex items-center gap-2">
-              <input
-                v-model="addon.name"
-                type="text"
-                required
-                placeholder="Ex: Ovo frito, Porção extra de frango"
-                class="flex-1 rounded-lg border border-line-strong bg-surface px-2.5 py-1.5 text-xs text-ink"
-              />
-              <button
-                type="button"
-                aria-label="Remover adicional"
-                class="p-1 text-red-500 hover:text-red-700"
-                @click="removeAddonRow(idx)"
-              >
-                <Trash2 class="h-4 w-4" />
-              </button>
+            <div class="flex items-center gap-1.5 font-bold text-amber-900 dark:text-amber-300">
+              <Sparkles class="h-4 w-4 text-brand-600" />
+              <span>Estimativa Nutricional (Gemini IA)</span>
             </div>
-            <div class="grid grid-cols-2 gap-2">
+            <div class="mt-2 grid grid-cols-4 gap-1.5 text-center">
+              <div class="rounded-lg bg-surface p-1.5 border border-line">
+                <p class="text-[10px] text-ink-muted">Kcal</p>
+                <p class="font-bold text-amber-700 dark:text-amber-400">~{{ aiNutrition.calories }}</p>
+              </div>
+              <div class="rounded-lg bg-surface p-1.5 border border-line">
+                <p class="text-[10px] text-ink-muted">Prot</p>
+                <p class="font-bold text-fresh-700 dark:text-fresh-400">{{ aiNutrition.protein }}g</p>
+              </div>
+              <div class="rounded-lg bg-surface p-1.5 border border-line">
+                <p class="text-[10px] text-ink-muted">Carb</p>
+                <p class="font-bold text-ink">{{ aiNutrition.carbs }}g</p>
+              </div>
+              <div class="rounded-lg bg-surface p-1.5 border border-line">
+                <p class="text-[10px] text-ink-muted">Gord</p>
+                <p class="font-bold text-ink">{{ aiNutrition.fat }}g</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-2xl border border-line bg-surface-subtle p-3">
+            <AppToggle
+              v-model="availableInPlans"
+              active-color="fresh"
+              label="Disponível em Planos Mensais"
+              description="Assinantes podem resgatar este prato sem custo base."
+            />
+          </div>
+
+          <div class="rounded-2xl border border-line bg-surface-subtle p-3 space-y-2.5">
+            <AppToggle
+              v-model="allowsCutlery"
+              label="Oferecer opção de talheres?"
+            />
+            <div v-if="allowsCutlery" class="space-y-2 border-t border-line pt-2.5">
+              <div class="flex gap-4 text-xs font-semibold text-ink">
+                <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                  <input v-model="cutleryHasExtraCost" type="radio" :value="false" class="accent-brand-600" />
+                  Gratuito
+                </label>
+                <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                  <input v-model="cutleryHasExtraCost" type="radio" :value="true" class="accent-brand-600" />
+                  Com custo extra
+                </label>
+              </div>
               <AppInput
-                v-model.number="addon.extraPrice"
-                label="Valor extra (R$)"
+                v-if="cutleryHasExtraCost"
+                v-model.number="cutleryPrice"
+                label="Valor do talher (R$)"
                 type="number"
                 step="0.01"
-                min="0"
+                min="0.01"
                 required
-              />
-              <AppInput
-                v-model.number="addon.maxQuantity"
-                label="Limite máx."
-                type="number"
-                min="1"
-                step="1"
-                required
+                placeholder="1.50"
               />
             </div>
           </div>
-        </div>
-      </form>
+
+          <div class="rounded-2xl border border-line bg-surface-subtle p-3 space-y-2.5">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-ink">Adicionais ({{ productAddons.length }})</span>
+              <AppButton type="button" variant="outline" size="xs" @click="addAddonRow">
+                <Plus class="h-3.5 w-3.5" />
+                Extra
+              </AppButton>
+            </div>
+
+            <div
+              v-for="(addon, idx) in productAddons"
+              :key="idx"
+              class="rounded-xl border border-line bg-surface p-2.5 space-y-2"
+            >
+              <div class="flex items-center gap-2">
+                <input
+                  v-model="addon.name"
+                  type="text"
+                  required
+                  placeholder="Ex: Ovo frito"
+                  class="flex-1 rounded-lg border border-line-strong bg-surface px-2.5 py-1 text-xs text-ink"
+                />
+                <button
+                  type="button"
+                  aria-label="Remover adicional"
+                  class="p-1 text-red-500 hover:text-red-700"
+                  @click="removeAddonRow(idx)"
+                >
+                  <Trash2 class="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <AppInput v-model.number="addon.extraPrice" label="Preço (R$)" type="number" step="0.01" min="0" required />
+                <AppInput v-model.number="addon.maxQuantity" label="Máx." type="number" min="1" step="1" required />
+              </div>
+            </div>
+          </div>
+        </form>
+
+        <!-- Right: Live Customer Card Preview -->
+        <aside class="hidden lg:block lg:col-span-5 sticky top-2">
+          <div class="rounded-3xl border-4 border-stone-800 bg-canvas p-4 shadow-elevated space-y-3">
+            <div class="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-ink-muted">
+              <span>Preview do Cliente</span>
+              <AppBadge variant="brand" size="xs">Ao vivo</AppBadge>
+            </div>
+
+            <div class="rounded-2xl border border-line bg-surface p-3.5 shadow-card space-y-3">
+              <div class="aspect-[16/10] w-full overflow-hidden rounded-xl bg-surface-muted flex items-center justify-center">
+                <img
+                  v-if="productImageUrl"
+                  :src="productImageUrl"
+                  alt="Preview do prato"
+                  class="h-full w-full object-cover"
+                />
+                <UtensilsCrossed v-else class="h-8 w-8 text-ink-muted/50" />
+              </div>
+
+              <div class="space-y-1.5">
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <span class="text-[10px] font-bold uppercase tracking-wide text-ink-muted">
+                    {{ previewCategoryName }}
+                  </span>
+                  <AppBadge v-if="availableInPlans" variant="fresh" size="xs">
+                    Aceita Plano
+                  </AppBadge>
+                </div>
+
+                <h4 class="font-display text-sm font-extrabold text-ink leading-snug">
+                  {{ productName.trim() || 'Nome da sua marmita aparecerá aqui' }}
+                </h4>
+
+                <p class="text-xs leading-relaxed text-ink-secondary line-clamp-3">
+                  {{ productDescription.trim() || 'Descreva os ingredientes ou clique em Otimizar com IA para uma descrição gourmet.' }}
+                </p>
+              </div>
+
+              <div class="flex items-center justify-between border-t border-line pt-2.5">
+                <span class="font-display text-base font-extrabold text-ink tabular-nums">
+                  {{ formatCurrency(productPrice || 0) }}
+                </span>
+                <span class="rounded-lg bg-brand-600 px-3 py-1.5 text-[11px] font-bold text-white">
+                  + Adicionar
+                </span>
+              </div>
+
+              <div v-if="productAddons.length > 0 || allowsCutlery" class="border-t border-line pt-2 text-[10px] text-ink-muted space-y-0.5">
+                <p v-if="productAddons.length > 0">
+                  {{ productAddons.length }} adicional(is) configurável(is)
+                </p>
+                <p v-if="allowsCutlery">
+                  Talheres: {{ cutleryHasExtraCost ? `+ ${formatCurrency(cutleryPrice || 0)}` : 'Grátis' }}
+                </p>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
 
       <template #footer>
         <div class="flex justify-end gap-2">
-          <AppButton variant="outline" size="md" @click="drawerOpen = false">Cancelar</AppButton>
+          <AppButton variant="outline" size="md" @click="editorOpen = false">Cancelar</AppButton>
           <AppButton
             type="submit"
-            form="dish-drawer-form"
+            form="dish-editor-form"
             variant="primary"
             size="md"
             :loading="savingProduct"
@@ -615,7 +656,7 @@ async function handleConfirmDelete() {
           </AppButton>
         </div>
       </template>
-    </AppDrawer>
+    </AppModal>
 
     <AppConfirmDialog
       :open="Boolean(deleteTarget)"

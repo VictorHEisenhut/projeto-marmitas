@@ -119,6 +119,18 @@ public class PlatformModulesTests : IClassFixture<WebApplicationFactory<Program>
             productId = product.Id;
         }
 
+        var addrRes = await client.PostAsJsonAsync("/api/usuarios/me/enderecos", new
+        {
+            street = "Rua Antônio da Veiga",
+            number = "520",
+            neighborhood = "Victor Konder",
+            city = "Blumenau",
+            state = "SC",
+            zipCode = "89012-500",
+            isMain = true
+        });
+        Assert.Equal(HttpStatusCode.Created, addrRes.StatusCode);
+
         var idempotencyKey = Guid.NewGuid().ToString("N");
         var orderReq = new CreateOrderRequest
         {
@@ -327,6 +339,18 @@ public class PlatformModulesTests : IClassFixture<WebApplicationFactory<Program>
         // Segundo plano no mesmo restaurante A deve ser bloqueado
         var duplicateSubARes = await customerClient.PostAsJsonAsync("/api/assinaturas", new { planId = planAId });
         Assert.Equal(HttpStatusCode.BadRequest, duplicateSubARes.StatusCode);
+
+        var customerAddrRes = await customerClient.PostAsJsonAsync("/api/usuarios/me/enderecos", new
+        {
+            street = "Rua XV de Novembro",
+            number = "700",
+            neighborhood = "Centro",
+            city = "Blumenau",
+            state = "SC",
+            zipCode = "89010-001",
+            isMain = true
+        });
+        Assert.Equal(HttpStatusCode.Created, customerAddrRes.StatusCode);
 
         // Cliente tenta resgatar pelo plano no Restaurante B -> deve falhar
         var redeemWrongRes = await customerClient.PostAsJsonAsync("/api/v1/pedidos", new CreateOrderRequest

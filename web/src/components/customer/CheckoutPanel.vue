@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import {
   Check,
   Clock,
@@ -55,11 +55,52 @@ const paymentMethod = ref<'PIX' | 'CreditCard' | 'DebitCard'>('PIX')
 const submittingOrder = ref(false)
 const checkoutError = ref('')
 
-// PIX Confirmation Modal
+// PIX Confirmation Modal + 15-min countdown
 const pixModalOpen = ref(false)
 const pixPayment = ref<PaymentResponse | null>(null)
 const pixOrderPin = ref<string | undefined>(undefined)
 const copiedPix = ref(false)
+const pixSecondsLeft = ref(900)
+let pixTimer: ReturnType<typeof setInterval> | null = null
+
+const pixFormattedCountdown = computed(() => {
+  const m = Math.floor(pixSecondsLeft.value / 60)
+  const s = pixSecondsLeft.value % 60
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+})
+
+function startPixCountdown() {
+  if (pixTimer) clearInterval(pixTimer)
+  pixSecondsLeft.value = 900
+  pixTimer = setInterval(() => {
+    if (pixSecondsLeft.value > 0) {
+      pixSecondsLeft.value -= 1
+    } else if (pixTimer) {
+      clearInterval(pixTimer)
+      pixTimer = null
+    }
+  }, 1000)
+}
+
+onUnmounted(() => {
+  if (pixTimer) clearInterval(pixTimer)
+})
+
+const selectedAddress = computed(
+  () => props.addresses.find((a) => a.id === props.selectedAddressId) ?? null,
+)
+
+const hasRegisteredAddress = computed(
+  () => props.addresses.length > 0 && Boolean(selectedAddress.value),
+)
+
+const addressMiniMapUrl = computed(() => {
+  const lat = selectedAddress.value?.latitude ?? -26.9194
+  const lon = selectedAddress.value?.longitude ?? -49.0661
+  const delta = 0.004
+  const bbox = `${lon - delta},${lat - delta},${lon + delta},${lat + delta}`
+  return `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${lat},${lon}`
+})
 
 const remainingPlanMeals = computed(() => {
   if (props.weeklyPlanLimit === null) return null
@@ -70,6 +111,15 @@ const planUsagePercent = computed(() => {
   if (!props.weeklyPlanLimit || props.weeklyPlanLimit <= 0) return 0
   return Math.min(100, Math.round((props.usedPlanMealsThisWeek / props.weeklyPlanLimit) * 100))
 })
+
+const planSavingsAmount = computed(() => {
+  if (!cart.isPlanRedemption) return 0
+  return cart.items.reduce((sum, i) => sum + (i.basePrice ?? i.price) * i.quantity, 0)
+})
+
+const totalSavingsAmount = computed(
+  () => planSavingsAmount.value + (appliedCoupon.value?.valid ? appliedCoupon.value.discountAmount : 0),
+)
 
 const finalCartTotal = computed(() => {
   if (appliedCoupon.value && appliedCoupon.value.valid) {
@@ -155,8 +205,14 @@ async function handleCheckout() {
   if (!cart.restaurantId || cart.items.length === 0) return
   checkoutError.value = ''
 
-  if (props.addresses.length > 0 && !props.selectedAddressId) {
-    checkoutError.value = 'Selecione um endereço de entrega para continuar.'
+  if (props.addresses.length === 0) {
+    checkoutError.value = 'É obrigatório cadastrar um endereço de entrega antes de fazer um pedido.'
+    toast.warning(checkoutError.value)
+    return
+  }
+
+  if (!props.selectedAddressId || !selectedAddress.value) {
+    checkoutError.value = 'Selecione um endereço de entrega cadastrado para continuar.'
     toast.warning(checkoutError.value)
     return
   }
@@ -210,6 +266,7 @@ async function handleCheckout() {
       pixPayment.value = paymentRes
       pixOrderPin.value = created.confirmationPin
       pixModalOpen.value = true
+      startPixCountdown()
     }
 
     toast.success('Pedido confirmado e pagamento aprovado!', 'Pedido realizado')
@@ -225,10 +282,9 @@ async function handleCheckout() {
 </script>
 
 <template>
-  <section class="grid gap-6 lg:grid-cols-12 items-start">
-    <!-- Left Column: Steps (Items, Plan Quota, Address, Estimate, Coupon, Payment) -->
+  <section class="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
+    <!-- Left Column -->
     <div class="space-y-5 lg:col-span-7 xl:col-span-8">
-      <!-- Plan Weekly Quota Banner -->
       <div
         v-if="activeSubscription && weeklyPlanLimit !== null"
         class="rounded-2xl border border-fresh-200 bg-fresh-50/70 p-4 dark:border-fresh-800/60 dark:bg-fresh-950/30"
@@ -236,7 +292,7 @@ async function handleCheckout() {
         <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
           <div class="flex items-center gap-2 font-bold text-fresh-800 dark:text-fresh-300">
             <Sparkles class="h-4 w-4 text-fresh-600" />
-            <span>{{ activeSubscription.planName }} · Cota Semanal ({{ cart.restaurantName }})</span>
+            <span>{{ activeSubscription.planName }} · Cota Semanal</span>
           </div>
           <span class="font-display font-extrabold text-fresh-700 dark:text-fresh-300 tabular-nums">
             {{ remainingPlanMeals }} disponível(is) de {{ weeklyPlanLimit }}
@@ -253,33 +309,6 @@ async function handleCheckout() {
         </p>
       </div>
 
-      <!-- Missing Restaurant Subscription Alert for Plan Redemption -->
-      <div
-        v-else-if="cart.isPlanRedemption && !activeSubscription"
-        class="flex flex-col justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50/80 p-4 text-xs text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-200 sm:flex-row sm:items-center"
-      >
-        <span>
-          Você não possui uma assinatura ativa em <strong>{{ cart.restaurantName }}</strong> para resgatar pelo plano.
-        </span>
-        <div class="flex flex-wrap gap-2 shrink-0">
-          <RouterLink
-            v-if="cart.restaurantId"
-            :to="`/restaurantes/${cart.restaurantId}`"
-            class="rounded-lg border border-amber-400/60 px-3 py-1.5 font-bold hover:bg-amber-100 dark:hover:bg-amber-900/40"
-          >
-            Ver planos desta loja
-          </RouterLink>
-          <button
-            type="button"
-            class="rounded-lg bg-amber-700 px-3 py-1.5 font-bold text-white hover:bg-amber-800"
-            @click="cart.setPlanMode(false)"
-          >
-            Trocar para compra avulsa
-          </button>
-        </div>
-      </div>
-
-      <!-- Inline Checkout Error -->
       <div
         v-if="checkoutError"
         role="alert"
@@ -288,7 +317,7 @@ async function handleCheckout() {
         {{ checkoutError }}
       </div>
 
-      <!-- Step 1: Delivery Address Cards -->
+      <!-- Step 1: Address Cards + Mini-Map Confirmation -->
       <AppCard>
         <div class="flex items-center justify-between gap-2 mb-4">
           <div class="flex items-center gap-2">
@@ -305,54 +334,75 @@ async function handleCheckout() {
           </RouterLink>
         </div>
 
-        <div v-if="addresses.length > 0" class="grid gap-3 sm:grid-cols-2">
-          <button
-            v-for="addr in addresses"
-            :key="addr.id"
-            type="button"
-            class="flex items-start gap-3 rounded-2xl border p-3.5 text-left transition"
-            :class="
-              selectedAddressId === addr.id
-                ? 'border-brand-600 bg-brand-50/40 ring-1 ring-brand-600/30 dark:bg-brand-950/30'
-                : 'border-line bg-surface-subtle hover:border-line-strong'
-            "
-            @click="emit('update:selectedAddressId', addr.id)"
-          >
-            <MapPin
-              class="mt-0.5 h-4 w-4 shrink-0"
-              :class="selectedAddressId === addr.id ? 'text-brand-600' : 'text-ink-muted'"
-            />
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center justify-between gap-1">
-                <p class="truncate text-sm font-bold text-ink">
-                  {{ addr.street }}, {{ addr.number }}
+        <div v-if="addresses.length > 0" class="space-y-4">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <button
+              v-for="addr in addresses"
+              :key="addr.id"
+              type="button"
+              class="flex items-start gap-3 rounded-2xl border p-3.5 text-left transition"
+              :class="
+                selectedAddressId === addr.id
+                  ? 'border-brand-600 bg-brand-50/40 ring-1 ring-brand-600/30 dark:bg-brand-950/30'
+                  : 'border-line bg-surface-subtle hover:border-line-strong'
+              "
+              @click="emit('update:selectedAddressId', addr.id)"
+            >
+              <MapPin
+                class="mt-0.5 h-4 w-4 shrink-0"
+                :class="selectedAddressId === addr.id ? 'text-brand-600' : 'text-ink-muted'"
+              />
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between gap-1">
+                  <p class="truncate text-sm font-bold text-ink">
+                    {{ addr.street }}, {{ addr.number }}
+                  </p>
+                  <AppBadge v-if="addr.isMain" variant="brand" size="xs">Principal</AppBadge>
+                </div>
+                <p class="text-xs text-ink-secondary truncate">
+                  {{ addr.neighborhood }} — {{ addr.city }}/{{ addr.state }}
                 </p>
-                <AppBadge v-if="addr.isMain" variant="brand" size="xs">Principal</AppBadge>
+                <p v-if="addr.complement" class="text-[11px] text-ink-muted truncate">
+                  {{ addr.complement }}
+                </p>
               </div>
-              <p class="text-xs text-ink-secondary truncate">
-                {{ addr.neighborhood }} — {{ addr.city }}/{{ addr.state }}
-              </p>
-              <p v-if="addr.complement" class="text-[11px] text-ink-muted truncate">
-                {{ addr.complement }}
-              </p>
-            </div>
-          </button>
+            </button>
+          </div>
+
+          <!-- Address Confirmation Mini-Map -->
+          <div
+            v-if="selectedAddress"
+            class="overflow-hidden rounded-2xl border border-line bg-surface-muted"
+          >
+            <iframe
+              :key="selectedAddress.id"
+              :src="addressMiniMapUrl"
+              title="Confirmação visual do endereço"
+              class="h-32 w-full border-0"
+              loading="lazy"
+            />
+          </div>
         </div>
 
         <div
           v-else
-          class="flex flex-col items-start justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50/70 p-4 text-xs text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-300 sm:flex-row sm:items-center"
+          role="alert"
+          class="flex flex-col items-start justify-between gap-3 rounded-2xl border border-red-200 bg-red-50/80 p-4 text-xs text-red-800 dark:border-red-900/60 dark:bg-red-950/35 dark:text-red-300 sm:flex-row sm:items-center"
         >
-          <span>Você ainda não cadastrou um endereço de entrega.</span>
+          <div class="space-y-0.5">
+            <p class="font-bold">Endereço obrigatório para fazer pedidos</p>
+            <p class="opacity-90">
+              Você ainda não possui um endereço cadastrado. Cadastre seu endereço de entrega para liberar o checkout.
+            </p>
+          </div>
           <RouterLink
             to="/conta?tab=enderecos"
-            class="font-bold underline"
+            class="shrink-0 rounded-xl bg-brand-600 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-brand-700"
           >
-            Cadastrar endereço agora
+            Cadastrar endereço
           </RouterLink>
         </div>
 
-        <!-- Delivery Estimate Breakdown Card -->
         <div
           v-if="cartEstimate"
           class="mt-4 rounded-2xl border border-brand-200/80 bg-brand-50/40 p-4 dark:border-brand-800/50 dark:bg-brand-950/25"
@@ -522,12 +572,12 @@ async function handleCheckout() {
       </AppCard>
     </div>
 
-    <!-- Right Column: Sticky Financial Summary & Coupon -->
+    <!-- Right Column: Sticky Financial Summary -->
     <aside class="lg:col-span-5 xl:col-span-4 lg:sticky lg:top-24 space-y-4">
       <AppCard padding="lg" class="space-y-5">
         <h2 class="font-display text-lg font-extrabold text-ink">Resumo do pedido</h2>
 
-        <!-- Coupon Input -->
+        <!-- Coupon -->
         <div class="space-y-2">
           <label class="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-ink-muted">
             <Tag class="h-3.5 w-3.5 text-brand-600" />
@@ -572,11 +622,19 @@ async function handleCheckout() {
           </div>
         </div>
 
-        <!-- Totals Breakdown -->
+        <!-- Totals & Total Savings Highlight -->
         <div class="space-y-2.5 border-t border-line pt-4 text-sm">
           <div class="flex items-center justify-between text-ink-secondary">
             <span>Subtotal ({{ cart.totalItems }} {{ cart.totalItems === 1 ? 'item' : 'itens' }})</span>
             <span class="font-semibold tabular-nums">{{ formatCurrency(cart.totalAmount) }}</span>
+          </div>
+
+          <div
+            v-if="planSavingsAmount > 0"
+            class="flex items-center justify-between text-fresh-700 dark:text-fresh-400"
+          >
+            <span>Coberto pelo Plano</span>
+            <span class="font-bold tabular-nums">-{{ formatCurrency(planSavingsAmount) }}</span>
           </div>
 
           <div
@@ -587,6 +645,14 @@ async function handleCheckout() {
             <span class="font-bold tabular-nums">-{{ formatCurrency(appliedCoupon.discountAmount) }}</span>
           </div>
 
+          <div
+            v-if="totalSavingsAmount > 0"
+            class="rounded-xl bg-fresh-50 px-3 py-2 text-xs font-bold text-fresh-800 dark:bg-fresh-950/40 dark:text-fresh-300 flex items-center justify-between"
+          >
+            <span>Sua economia neste pedido</span>
+            <span class="tabular-nums">{{ formatCurrency(totalSavingsAmount) }}</span>
+          </div>
+
           <div class="flex items-center justify-between border-t border-line pt-3">
             <span class="font-display text-base font-extrabold text-ink">Total a pagar</span>
             <span class="font-display text-2xl font-extrabold text-ink tabular-nums">
@@ -595,10 +661,27 @@ async function handleCheckout() {
           </div>
         </div>
 
+        <div
+          v-if="!hasRegisteredAddress"
+          class="rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-xs text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/35 dark:text-amber-300"
+        >
+          <p class="font-bold">
+            {{ addresses.length === 0 ? 'Cadastre um endereço para finalizar' : 'Selecione um endereço de entrega' }}
+          </p>
+          <RouterLink
+            v-if="addresses.length === 0"
+            to="/conta?tab=enderecos"
+            class="mt-1 inline-block font-bold text-brand-600 underline dark:text-brand-400"
+          >
+            Ir para Meus Endereços
+          </RouterLink>
+        </div>
+
         <AppButton
           variant="primary"
           size="lg"
           block
+          :disabled="!hasRegisteredAddress"
           :loading="submittingOrder"
           @click="handleCheckout"
         >
@@ -613,7 +696,7 @@ async function handleCheckout() {
     </aside>
   </section>
 
-  <!-- PIX Confirmation Modal -->
+  <!-- PIX Confirmation Modal with Visual QR SVG + 15-min Countdown -->
   <AppModal
     :open="pixModalOpen"
     title="Pagamento PIX Confirmado"
@@ -622,8 +705,39 @@ async function handleCheckout() {
     @close="pixModalOpen = false"
   >
     <div v-if="pixPayment" class="space-y-5 text-center">
-      <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-fresh-50 text-fresh-600 dark:bg-fresh-950/60 dark:text-fresh-400">
-        <QrCode class="h-8 w-8" />
+      <!-- Visual QR Code Matrix Frame + Countdown -->
+      <div class="mx-auto inline-flex flex-col items-center gap-2 rounded-3xl border border-line bg-white p-4 shadow-card">
+        <svg viewBox="0 0 120 120" class="h-36 w-36 text-stone-900" aria-label="QR Code PIX">
+          <rect width="120" height="120" fill="#ffffff" />
+          <!-- Top-left finder -->
+          <rect x="8" y="8" width="28" height="28" rx="4" fill="none" stroke="currentColor" stroke-width="5" />
+          <rect x="16" y="16" width="12" height="12" rx="2" fill="currentColor" />
+          <!-- Top-right finder -->
+          <rect x="84" y="8" width="28" height="28" rx="4" fill="none" stroke="currentColor" stroke-width="5" />
+          <rect x="92" y="16" width="12" height="12" rx="2" fill="currentColor" />
+          <!-- Bottom-left finder -->
+          <rect x="8" y="84" width="28" height="28" rx="4" fill="none" stroke="currentColor" stroke-width="5" />
+          <rect x="16" y="92" width="12" height="12" rx="2" fill="currentColor" />
+          <!-- Matrix blocks -->
+          <rect x="46" y="12" width="8" height="8" fill="currentColor" />
+          <rect x="62" y="12" width="12" height="8" fill="currentColor" />
+          <rect x="46" y="28" width="16" height="8" fill="currentColor" />
+          <rect x="12" y="46" width="10" height="8" fill="currentColor" />
+          <rect x="30" y="46" width="14" height="8" fill="currentColor" />
+          <rect x="52" y="46" width="16" height="16" rx="3" fill="#EA580C" />
+          <rect x="76" y="46" width="10" height="8" fill="currentColor" />
+          <rect x="96" y="46" width="12" height="14" fill="currentColor" />
+          <rect x="12" y="64" width="18" height="8" fill="currentColor" />
+          <rect x="44" y="70" width="14" height="8" fill="currentColor" />
+          <rect x="66" y="68" width="18" height="10" fill="currentColor" />
+          <rect x="48" y="88" width="12" height="12" fill="currentColor" />
+          <rect x="70" y="88" width="16" height="8" fill="currentColor" />
+          <rect x="94" y="86" width="14" height="14" fill="currentColor" />
+          <rect x="72" y="104" width="24" height="8" fill="currentColor" />
+        </svg>
+        <span class="text-[11px] font-bold text-stone-600 tabular-nums">
+          Validade do código: {{ pixFormattedCountdown }}
+        </span>
       </div>
 
       <div>
@@ -648,9 +762,6 @@ async function handleCheckout() {
         <p class="mt-1 font-mono text-2xl font-extrabold tracking-[0.35em] text-amber-900 dark:text-amber-200">
           {{ pixOrderPin }}
         </p>
-        <p class="mt-1 text-[11px] text-amber-800/80 dark:text-amber-300/80">
-          Informe este código ao entregador quando receber sua marmita.
-        </p>
       </div>
 
       <div v-if="pixPayment.pixCopyPaste || pixPayment.pixQrCode" class="space-y-2 text-left">
@@ -660,7 +771,7 @@ async function handleCheckout() {
         <div class="rounded-xl border border-line bg-surface-subtle p-3 font-mono text-[11px] break-all text-ink-secondary max-h-24 overflow-y-auto">
           {{ pixPayment.pixCopyPaste || pixPayment.pixQrCode }}
         </div>
-        <AppButton variant="outline" size="sm" block @click="copyPixCode">
+        <AppButton variant="outline" size="md" block @click="copyPixCode">
           <Check v-if="copiedPix" class="h-4 w-4 text-fresh-600" />
           <Copy v-else class="h-4 w-4" />
           <span>{{ copiedPix ? 'Código PIX copiado!' : 'Copiar código Copia-e-Cola' }}</span>

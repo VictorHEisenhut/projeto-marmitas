@@ -13,12 +13,14 @@ public class GeolocationController : ControllerBase
 {
     private static readonly Dictionary<string, (string Street, string Neighborhood, string City, string State, double Lat, double Lon)> KnownZipPrefixes = new()
     {
-        ["010"] = ("Praça da Sé", "Sé", "São Paulo", "SP", -23.5505, -46.6333),
-        ["013"] = ("Av. Paulista", "Bela Vista", "São Paulo", "SP", -23.5614, -46.6559),
-        ["014"] = ("Rua Oscar Freire", "Jardins", "São Paulo", "SP", -23.5649, -46.6689),
-        ["040"] = ("Rua Domingos de Morais", "Vila Mariana", "São Paulo", "SP", -23.5890, -46.6365),
-        ["045"] = ("Av. Brigadeiro Faria Lima", "Itaim Bibi", "São Paulo", "SP", -23.5868, -46.6822),
-        ["054"] = ("Rua dos Pinheiros", "Pinheiros", "São Paulo", "SP", -23.5661, -46.6805)
+        ["89010"] = ("Rua XV de Novembro", "Centro", "Blumenau", "SC", -26.9194, -49.0661),
+        ["89012"] = ("Rua Antônio da Veiga", "Victor Konder", "Blumenau", "SC", -26.9068, -49.0772),
+        ["89020"] = ("Rua Amazonas", "Garcia", "Blumenau", "SC", -26.9355, -49.0638),
+        ["89030"] = ("Rua Bahia", "Salto", "Blumenau", "SC", -26.9012, -49.1045),
+        ["89035"] = ("Rua Almirante Barroso", "Vila Nova", "Blumenau", "SC", -26.9094, -49.0867),
+        ["89036"] = ("Rua João Pessoa", "Velha", "Blumenau", "SC", -26.9242, -49.0932),
+        ["89050"] = ("Rua República Argentina", "Ponta Aguda", "Blumenau", "SC", -26.9147, -49.0558),
+        ["89052"] = ("Rua 2 de Setembro", "Itoupava Norte", "Blumenau", "SC", -26.8856, -49.0731)
     };
 
     private readonly IHttpClientFactory _httpClientFactory;
@@ -49,11 +51,11 @@ public class GeolocationController : ControllerBase
         if (digits.Length != 8)
             throw new Exception("Informe um CEP válido com 8 dígitos.");
 
-        var prefix = digits[..3];
+        var prefix5 = digits[..5];
         (string Street, string Neighborhood, string City, string State, double Lat, double Lon) fallback =
-            KnownZipPrefixes.TryGetValue(prefix, out var match)
+            KnownZipPrefixes.TryGetValue(prefix5, out var match)
                 ? match
-                : ("Rua Central", "Centro", "São Paulo", "SP", -23.5505, -46.6333);
+                : ("Rua XV de Novembro", "Centro", "Blumenau", "SC", -26.9194, -49.0661);
 
         try
         {
@@ -147,7 +149,7 @@ public class GeolocationController : ControllerBase
 
         var customerAddress = selectedAddress != null
             ? $"{selectedAddress.Street}, {selectedAddress.Number} - {selectedAddress.Neighborhood}, {selectedAddress.City}/{selectedAddress.State}"
-            : "Centro, São Paulo/SP";
+            : "Centro, Blumenau/SC";
 
         var restaurantPoint = GeoCalculator.ResolveAddressCoordinates(
             restaurant.Latitude,

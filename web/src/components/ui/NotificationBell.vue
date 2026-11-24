@@ -73,7 +73,7 @@ onUnmounted(() => {
     <button
       type="button"
       aria-label="Notificações"
-      class="relative inline-flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-surface text-ink-secondary transition hover:border-line-strong hover:bg-surface-muted hover:text-ink"
+      class="relative inline-flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-xl border border-line bg-surface text-ink-secondary transition hover:border-line-strong hover:bg-surface-muted hover:text-ink"
       @click="toggle"
     >
       <Bell class="h-[18px] w-[18px]" />

@@ -113,26 +113,33 @@ public class CreateOrderService : ICreateOrderService
             order.SubscriptionId = activeSub.Id;
         }
 
-        if (!string.IsNullOrWhiteSpace(request.DeliveryAddress))
+        if (_profileRepository != null)
+        {
+            Address? resolvedAddress;
+            if (request.AddressId.HasValue && request.AddressId.Value != Guid.Empty)
+            {
+                resolvedAddress = await _profileRepository.GetAddressByIdAsync(request.AddressId.Value, customerId);
+                if (resolvedAddress == null)
+                    throw new Exception("Endereço de entrega não encontrado ou não pertence à sua conta. Cadastre e selecione um endereço válido.");
+            }
+            else
+            {
+                var addrs = await _profileRepository.GetAddressesByUserAsync(customerId);
+                resolvedAddress = addrs.FirstOrDefault(a => a.IsMain) ?? addrs.FirstOrDefault();
+            }
+
+            if (resolvedAddress == null)
+                throw new Exception("É obrigatório cadastrar um endereço de entrega antes de fazer um pedido.");
+
+            order.DeliveryAddress = FormatAddress(resolvedAddress);
+        }
+        else if (!string.IsNullOrWhiteSpace(request.DeliveryAddress))
         {
             order.DeliveryAddress = request.DeliveryAddress.Trim();
         }
-        else if (request.AddressId.HasValue && request.AddressId.Value != Guid.Empty && _profileRepository != null)
+        else
         {
-            var addr = await _profileRepository.GetAddressByIdAsync(request.AddressId.Value, customerId);
-            if (addr != null)
-            {
-                order.DeliveryAddress = FormatAddress(addr);
-            }
-        }
-        else if (_profileRepository != null)
-        {
-            var addrs = await _profileRepository.GetAddressesByUserAsync(customerId);
-            var mainAddr = addrs.FirstOrDefault(a => a.IsMain) ?? addrs.FirstOrDefault();
-            if (mainAddr != null)
-            {
-                order.DeliveryAddress = FormatAddress(mainAddr);
-            }
+            throw new Exception("É obrigatório cadastrar um endereço de entrega antes de fazer um pedido.");
         }
 
         foreach (var itemRequest in request.Items)

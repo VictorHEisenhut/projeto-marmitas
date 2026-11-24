@@ -89,6 +89,18 @@ public class OrdersTests : IClassFixture<WebApplicationFactory<Program>>
             productId = product.Id;
         }
 
+        var addrRes = await client.PostAsJsonAsync("/api/usuarios/me/enderecos", new
+        {
+            street = "Rua XV de Novembro",
+            number = "450",
+            neighborhood = "Centro",
+            city = "Blumenau",
+            state = "SC",
+            zipCode = "89010-001",
+            isMain = true
+        });
+        Assert.Equal(HttpStatusCode.Created, addrRes.StatusCode);
+
         var request = new CreateOrderRequest
         {
             RestaurantId = restaurantId,
@@ -105,6 +117,52 @@ public class OrdersTests : IClassFixture<WebApplicationFactory<Program>>
         var data = json;
         Assert.Equal(30.0m, data.GetProperty("totalAmount").GetDecimal());
         Assert.Equal("Created", data.GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task PostOrders_SemEnderecoCadastrado_DeveRetornar400()
+    {
+        var client = _factory.CreateClient();
+        var token = await ObterTokenAsync(client, $"customer_noaddr_{Guid.NewGuid()}@email.com");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        Guid restaurantId;
+        Guid productId;
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var owner = new User("Dono SemEnd", $"dono_noaddr_{Guid.NewGuid()}@test.com", null, "hash");
+            context.Users.Add(owner);
+
+            var restaurant = new Restaurant("Restaurante Blumenau", "Descricao", "12345678902", owner.Id);
+            restaurant.Approve();
+            context.Restaurants.Add(restaurant);
+
+            var category = new ProductCategory(restaurant.Id, "Pratos", 1);
+            context.ProductCategories.Add(category);
+
+            var product = new Product(restaurant.Id, category.Id, "Marmita M", "Marmita media", 20.0m, null);
+            context.Products.Add(product);
+            await context.SaveChangesAsync();
+
+            restaurantId = restaurant.Id;
+            productId = product.Id;
+        }
+
+        var request = new CreateOrderRequest
+        {
+            RestaurantId = restaurantId,
+            Items = new List<OrderItemRequest>
+            {
+                new OrderItemRequest { ProductId = productId, Quantity = 1 }
+            }
+        };
+
+        var response = await client.PostAsJsonAsync("/api/pedidos", request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = System.Text.RegularExpressions.Regex.Unescape(await response.Content.ReadAsStringAsync());
+        Assert.Contains("endereço", body, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -60,7 +60,7 @@ function handleKeydown(index: number, event: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="inline-flex items-center gap-2" role="group" aria-label="Código PIN de entrega">
+  <div class="inline-flex items-center gap-2" role="group" aria-label="Código OTP">
     <input
       v-for="(digit, idx) in digits"
       :key="idx"
@@ -68,7 +68,7 @@ function handleKeydown(index: number, event: KeyboardEvent) {
       :value="digit"
       type="text"
       inputmode="numeric"
-      maxlength="4"
+      :maxlength="props.length"
       :disabled="disabled"
       :aria-label="`Dígito ${idx + 1} do PIN`"
       class="h-12 w-11 rounded-xl border-2 border-line-strong bg-surface text-center font-display text-lg font-extrabold text-ink tabular-nums transition focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500/25 disabled:opacity-50"
