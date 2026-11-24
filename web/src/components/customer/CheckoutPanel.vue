@@ -21,6 +21,7 @@ import AppBadge from '@/components/ui/AppBadge.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import { api, formatCurrency, getErrorMessage } from '@/services/api'
 import { createMercadoPagoCardToken, isValidCpf, onlyDigits } from '@/services/mercadopago'
+import { useActiveOrderStore } from '@/stores/activeOrder'
 import { useAuthStore } from '@/stores/auth'
 import { useCartStore } from '@/stores/cart'
 import { useToastStore } from '@/stores/toast'
@@ -51,6 +52,7 @@ const emit = defineEmits<{
 const cart = useCartStore()
 const toast = useToastStore()
 const auth = useAuthStore()
+const activeOrders = useActiveOrderStore()
 
 const couponCode = ref('')
 const appliedCoupon = ref<CouponValidationResponse | null>(null)
@@ -65,6 +67,7 @@ const cardName = ref('')
 const cardExpiry = ref('')
 const cardCvv = ref('')
 const pendingOrderId = ref<string | null>(null)
+const draftOrderId = ref<string | null>(null)
 
 // PIX Confirmation Modal + 15-min countdown
 const pixModalOpen = ref(false)
@@ -116,7 +119,8 @@ function startPaymentPolling(orderId: string) {
       pixPayment.value = data
       if (data.status === 'Approved') {
         stopPaymentPolling()
-        toast.success('Pagamento PIX confirmado!', 'Pedido pago')
+        toast.success('Pagamento confirmado. Pedido realizado.', 'Pedido pago')
+        finishCheckout(orderId)
       } else if (data.status === 'Declined' || data.status === 'Cancelled' || data.status === 'Failed') {
         stopPaymentPolling()
         pendingOrderId.value = null
@@ -131,6 +135,10 @@ function startPaymentPolling(orderId: string) {
 onUnmounted(() => {
   if (pixTimer) clearInterval(pixTimer)
   stopPaymentPolling()
+  const orderId = draftOrderId.value
+  if (orderId && pixPayment.value?.status !== 'Approved') {
+    void api.patch(`/pedidos/${orderId}/cancelar`).catch(() => undefined)
+  }
 })
 
 const isLiveMercadoPago = computed(() => Boolean(paymentConfig.value?.live && paymentConfig.value.publicKey))
@@ -345,10 +353,15 @@ function readCardExpiry() {
   return { month, year: `20${year}` }
 }
 
+let closingPayment = false
+
 function finishCheckout(orderId: string) {
   stopPaymentPolling()
+  if (pixTimer) clearInterval(pixTimer)
   pixModalOpen.value = false
   pendingOrderId.value = null
+  draftOrderId.value = null
+  pixPayment.value = null
   cart.clear()
   appliedCoupon.value = null
   couponCode.value = ''
@@ -465,31 +478,17 @@ async function handleCheckout() {
     const hasPixCode = Boolean(paymentRes?.pixCopyPaste || paymentRes?.pixQrCode)
     const showPix = paymentMethod.value === 'PIX' && hasPixCode
 
-    if (showPix) {
+    if (showPix || paymentRes.status === 'Pending') {
       pixPayment.value = paymentRes
       pixOrderPin.value = created.confirmationPin
-      pendingOrderId.value = paymentRes.status === 'Pending' ? created.orderId : null
+      draftOrderId.value = created.orderId
+      pendingOrderId.value = paymentRes.status === 'Approved' ? null : created.orderId
       pixModalOpen.value = true
       startPixCountdown()
-      emit('order-created', created.orderId)
       if (paymentRes.status === 'Pending') {
         startPaymentPolling(created.orderId)
-        toast.info('PIX gerado. Pague para confirmarmos o pedido.', 'Aguardando pagamento')
-      } else {
-        toast.success('Pedido confirmado e pagamento aprovado!', 'Pedido realizado')
+        toast.info('Pague para confirmar. Se fechar esta janela, a compra continua no carrinho.')
       }
-      return
-    }
-
-    if (paymentRes.status === 'Pending') {
-      pixPayment.value = paymentRes
-      pixOrderPin.value = created.confirmationPin
-      pendingOrderId.value = created.orderId
-      pixModalOpen.value = true
-      startPixCountdown()
-      startPaymentPolling(created.orderId)
-      emit('order-created', created.orderId)
-      toast.info('Pagamento enviado. Aguardando confirmação do Mercado Pago.')
       return
     }
 
@@ -506,10 +505,46 @@ async function handleCheckout() {
   }
 }
 
-function closePixModal() {
-  const orderId = pixPayment.value?.orderId || pendingOrderId.value
-  if (orderId) finishCheckout(orderId)
-  else pixModalOpen.value = false
+async function closePixModal() {
+  if (closingPayment) return
+  const orderId = draftOrderId.value || pixPayment.value?.orderId || pendingOrderId.value
+  if (pixPayment.value?.status === 'Approved' && orderId) {
+    finishCheckout(orderId)
+    return
+  }
+
+  closingPayment = true
+  stopPaymentPolling()
+  if (pixTimer) clearInterval(pixTimer)
+  pixModalOpen.value = false
+
+  try {
+    if (orderId) {
+      try {
+        const { data } = await api.get<PaymentResponse>(`/pedidos/${orderId}/pagamento`)
+        if (data.status === 'Approved') {
+          finishCheckout(orderId)
+          return
+        }
+      } catch {
+        // Sem confirmação, o pedido pendente é cancelado.
+      }
+
+      try {
+        await api.patch(`/pedidos/${orderId}/cancelar`)
+      } catch {
+        // O pedido pode já ter sido cancelado.
+      }
+      void activeOrders.refresh()
+    }
+  } finally {
+    closingPayment = false
+    pendingOrderId.value = null
+    draftOrderId.value = null
+    pixPayment.value = null
+  }
+
+  toast.info('Pagamento não concluído. Você continua na página de compra.')
 }
 </script>
 
@@ -1000,8 +1035,8 @@ function closePixModal() {
   <!-- PIX Confirmation Modal with Visual QR SVG + 15-min Countdown -->
   <AppModal
     :open="pixModalOpen"
-    :title="pixPayment?.status === 'Pending' ? 'Pague com PIX' : 'Pagamento PIX confirmado'"
-    :subtitle="pixPayment?.status === 'Pending' ? 'O pedido confirma sozinho quando o Mercado Pago receber o pagamento.' : 'Comprovante e código PIX gerados pelo Mercado Pago.'"
+    :title="pixPayment?.status === 'Approved' ? 'Pagamento confirmado' : 'Pague para confirmar o pedido'"
+    :subtitle="pixPayment?.status === 'Approved' ? 'O pedido foi registrado depois da confirmação do pagamento.' : 'O pedido só é feito quando o pagamento for confirmado. Fechar esta janela volta para a compra.'"
     max-width="md"
     @close="closePixModal"
   >
@@ -1060,7 +1095,7 @@ function closePixModal() {
       </div>
 
       <div
-        v-if="pixOrderPin"
+        v-if="pixPayment.status === 'Approved' && pixOrderPin"
         class="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-800/60 dark:bg-amber-950/30"
       >
         <p class="text-xs font-bold text-amber-900 dark:text-amber-300">
@@ -1088,7 +1123,7 @@ function closePixModal() {
 
     <template #footer>
       <AppButton variant="primary" size="md" block @click="closePixModal">
-        Acompanhar meu pedido
+        {{ pixPayment?.status === 'Approved' ? 'Acompanhar meu pedido' : 'Fechar e continuar a compra' }}
       </AppButton>
     </template>
   </AppModal>

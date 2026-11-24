@@ -6,7 +6,6 @@ import type { Order } from '@/types'
 const ACTIVE_STATUSES = new Set([
   'Created',
   'Pending',
-  'PaymentPending',
   'Paid',
   'Confirmed',
   'Preparing',

@@ -48,7 +48,6 @@ const liveCoordsByOrder = ref<Record<string, { latitude: number; longitude: numb
 const activeStatuses = new Set([
   'Created',
   'Pending',
-  'PaymentPending',
   'Paid',
   'Confirmed',
   'Preparing',
@@ -58,8 +57,9 @@ const activeStatuses = new Set([
   'InTransit',
 ])
 
-const activeOrders = computed(() => orders.value.filter((o) => activeStatuses.has(o.status)))
-const pastOrders = computed(() => orders.value.filter((o) => !activeStatuses.has(o.status)))
+const visibleOrders = computed(() => orders.value.filter((o) => o.status !== 'PaymentPending'))
+const activeOrders = computed(() => visibleOrders.value.filter((o) => activeStatuses.has(o.status)))
+const pastOrders = computed(() => visibleOrders.value.filter((o) => !activeStatuses.has(o.status)))
 
 const heroOrder = computed<Order | null>(() => {
   if (trackingOrderId.value) {
