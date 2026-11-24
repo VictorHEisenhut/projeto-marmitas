@@ -3,6 +3,7 @@ using Marmitas.Application.Common.Interfaces;
 using Marmitas.Application.Platform.Dtos;
 using Marmitas.Application.Restaurants.Queries;
 using Marmitas.Domain.Entities;
+using Marmitas.Domain.ValueObjects;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -15,20 +16,30 @@ public class RestaurantsController : ControllerBase
     private readonly IRestaurantQueryService _restaurantQueryService;
     private readonly IRestaurantRepository _restaurantRepository;
     private readonly IUserRepository _userRepository;
+    private readonly ICustomerProfileRepository _profiles;
 
     public RestaurantsController(
         IRestaurantQueryService restaurantQueryService,
         IRestaurantRepository restaurantRepository,
-        IUserRepository userRepository)
+        IUserRepository userRepository,
+        ICustomerProfileRepository profiles)
     {
         _restaurantQueryService = restaurantQueryService;
         _restaurantRepository = restaurantRepository;
         _userRepository = userRepository;
+        _profiles = profiles;
     }
 
     [HttpGet]
     [AllowAnonymous]
-    public async Task<IActionResult> GetAll([FromQuery] bool includeAll = false)
+    public async Task<IActionResult> GetAll(
+        [FromQuery] bool includeAll = false,
+        [FromQuery] double? lat = null,
+        [FromQuery] double? lon = null,
+        [FromQuery] string? city = null,
+        [FromQuery] string? state = null,
+        [FromQuery] Guid? addressId = null,
+        [FromQuery] bool ignoreRadius = false)
     {
         if (includeAll && (User.IsInRole("admin") || User.IsInRole("super_admin")))
         {
@@ -37,8 +48,110 @@ public class RestaurantsController : ControllerBase
         }
 
         var restaurants = await _restaurantQueryService.GetAllPublicAsync();
-        return Ok(restaurants);
+        if (ignoreRadius)
+            return Ok(restaurants);
+
+        string? resolvedStreet = null;
+        string? resolvedNeighborhood = null;
+        string? resolvedCity = city;
+        string? resolvedState = state;
+        string? resolvedZip = null;
+        double? resolvedLat = lat;
+        double? resolvedLon = lon;
+
+        if (addressId.HasValue && addressId.Value != Guid.Empty)
+        {
+            var currentUserId = GetCurrentUserId();
+            if (currentUserId.HasValue)
+            {
+                var addr = await _profiles.GetAddressByIdAsync(addressId.Value, currentUserId.Value);
+                if (addr != null)
+                {
+                    resolvedStreet = addr.Street;
+                    resolvedNeighborhood = addr.Neighborhood;
+                    resolvedCity = addr.City;
+                    resolvedState = addr.State;
+                    resolvedZip = addr.ZipCode;
+                    resolvedLat = addr.Latitude;
+                    resolvedLon = addr.Longitude;
+                }
+            }
+        }
+
+        var hasLocationFilter =
+            (resolvedLat.HasValue && resolvedLon.HasValue) ||
+            !string.IsNullOrWhiteSpace(resolvedCity) ||
+            !string.IsNullOrWhiteSpace(resolvedState);
+
+        if (!hasLocationFilter)
+            return Ok(restaurants);
+
+        var customerPoint = GeoCalculator.ResolveAddressCoordinates(
+            resolvedLat,
+            resolvedLon,
+            resolvedStreet,
+            resolvedNeighborhood,
+            resolvedCity,
+            resolvedState,
+            resolvedZip,
+            "Cliente");
+
+        var filtered = new List<RestaurantDto>();
+        foreach (var r in restaurants)
+        {
+            var restPoint = GeoCalculator.ResolveAddressCoordinates(
+                r.Latitude,
+                r.Longitude,
+                r.AddressStreet,
+                r.AddressNeighborhood,
+                r.AddressCity,
+                r.AddressState,
+                r.AddressZipCode,
+                r.Name);
+
+            var distanceKm = GeoCalculator.CalculateDistanceKm(
+                customerPoint.Latitude,
+                customerPoint.Longitude,
+                restPoint.Latitude,
+                restPoint.Longitude);
+
+            var maxRadius = r.DeliveryRadiusKm > 0 ? r.DeliveryRadiusKm : 8.0;
+            if (distanceKm <= maxRadius)
+            {
+                filtered.Add(CloneWithDistance(r, distanceKm));
+            }
+        }
+
+        return Ok(filtered.OrderBy(r => r.DistanceKm ?? double.MaxValue).ToList());
     }
+
+    private static RestaurantDto CloneWithDistance(RestaurantDto r, double distanceKm) => new()
+    {
+        Id = r.Id,
+        Name = r.Name,
+        Description = r.Description,
+        Document = r.Document,
+        ImageUrl = r.ImageUrl,
+        Status = r.Status,
+        OwnerId = r.OwnerId,
+        AddressStreet = r.AddressStreet,
+        AddressNumber = r.AddressNumber,
+        AddressComplement = r.AddressComplement,
+        AddressNeighborhood = r.AddressNeighborhood,
+        AddressCity = r.AddressCity,
+        AddressState = r.AddressState,
+        AddressZipCode = r.AddressZipCode,
+        Latitude = r.Latitude,
+        Longitude = r.Longitude,
+        OpeningHours = r.OpeningHours,
+        DeliveryFee = r.DeliveryFee,
+        DeliveryRadiusKm = r.DeliveryRadiusKm,
+        DistanceKm = distanceKm,
+        BankName = r.BankName,
+        BankAgency = r.BankAgency,
+        BankAccount = r.BankAccount,
+        PixKey = r.PixKey
+    };
 
     [HttpGet("{id}")]
     [AllowAnonymous]

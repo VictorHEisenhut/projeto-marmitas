@@ -14,7 +14,6 @@ public static class UserMapper
             Email = user.Email,
             Phone = user.Phone,
             Status = user.Status.ToString(),
-            MfaEnabled = user.MfaEnabled,
             Roles = user.GetRoleNames()
         };
     }

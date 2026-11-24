@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Bike, Eye, EyeOff, Lock, ShieldAlert } from 'lucide-vue-next'
+import { Eye, EyeOff, ShieldAlert } from 'lucide-vue-next'
 import AuthLayout from '@/layouts/AuthLayout.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppInput from '@/components/ui/AppInput.vue'
-import OtpInput from '@/components/ui/OtpInput.vue'
 import { getErrorMessage } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
@@ -17,8 +16,6 @@ const toast = useToastStore()
 
 const email = ref(typeof route.query.email === 'string' ? route.query.email : '')
 const password = ref('')
-const mfaCode = ref('')
-const showMfaField = ref(false)
 const showPassword = ref(false)
 const loading = ref(false)
 const error = ref('')
@@ -39,7 +36,6 @@ async function handleSubmit() {
     await auth.login({
       email: email.value,
       password: password.value,
-      mfaCode: mfaCode.value.trim() || undefined,
     })
 
     toast.success('Login realizado com sucesso!')
@@ -50,11 +46,7 @@ async function handleSubmit() {
       await router.replace(auth.defaultRoute)
     }
   } catch (err) {
-    const msg = getErrorMessage(err, 'E-mail ou senha inválidos.')
-    error.value = msg
-    if (/mfa|duas etapas|código/i.test(msg)) {
-      showMfaField.value = true
-    }
+    error.value = getErrorMessage(err, 'E-mail ou senha inválidos.')
   } finally {
     loading.value = false
   }
@@ -129,39 +121,10 @@ async function handleSubmit() {
         </template>
       </AppInput>
 
-      <!-- Conditional / Expandable MFA Code -->
-      <div v-if="showMfaField" class="rounded-xl border border-line bg-surface-subtle p-3.5 space-y-2.5 animate-slide-up">
-        <div class="space-y-0.5">
-          <label class="block text-xs font-semibold text-ink">Código de Autenticação (MFA)</label>
-          <p class="text-[11px] text-ink-muted">Informe o código de 6 dígitos configurado na sua conta.</p>
-        </div>
-        <OtpInput v-model="mfaCode" :length="6" />
-      </div>
-
-      <button
-        v-else
-        type="button"
-        class="inline-flex items-center gap-1.5 text-xs font-semibold text-ink-muted hover:text-brand-600"
-        @click="showMfaField = true"
-      >
-        <Lock class="h-3.5 w-3.5" />
-        <span>Possui autenticação em duas etapas (MFA)?</span>
-      </button>
-
       <AppButton type="submit" variant="primary" size="lg" block :loading="loading">
         Entrar
       </AppButton>
     </form>
-
-    <div class="mt-6 border-t border-line pt-4 text-center">
-      <RouterLink
-        to="/entregador/cadastro"
-        class="inline-flex items-center gap-1.5 text-xs font-semibold text-ink-secondary transition hover:text-brand-600"
-      >
-        <Bike class="h-4 w-4 text-brand-600" />
-        <span>Quer trabalhar com entregas? Cadastre-se como entregador</span>
-      </RouterLink>
-    </div>
 
     <template #footer>
       Ainda não tem conta?

@@ -22,7 +22,8 @@ public class RestaurantDto
 
     public string OpeningHours { get; set; } = "Seg a Sáb • 10:30 às 15:30";
     public decimal DeliveryFee { get; set; }
-    public double DeliveryRadiusKm { get; set; } = 12.0;
+    public double DeliveryRadiusKm { get; set; } = 8.0;
+    public double? DistanceKm { get; set; }
     public string? BankName { get; set; }
     public string? BankAgency { get; set; }
     public string? BankAccount { get; set; }

@@ -1,33 +1,39 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft,
+  CalendarDays,
+  Check,
   Clock,
   Flame,
   Heart,
   MapPin,
+  MessageSquare,
   Plus,
   Search,
+  Send,
   Sparkles,
+  Star,
   Store,
   Truck,
   UtensilsCrossed,
 } from 'lucide-vue-next'
 import CustomerLayout from '@/layouts/CustomerLayout.vue'
-import AiMarmitaAssistantModal from '@/components/AiMarmitaAssistantModal.vue'
 import DishCustomizeModal from '@/components/customer/DishCustomizeModal.vue'
 import LiveCartSidebar from '@/components/customer/LiveCartSidebar.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppBadge from '@/components/ui/AppBadge.vue'
+import AppCard from '@/components/ui/AppCard.vue'
 import AppSkeleton from '@/components/ui/AppSkeleton.vue'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
 import AppConfirmDialog from '@/components/ui/AppConfirmDialog.vue'
+import StarRating from '@/components/ui/StarRating.vue'
 import { api, formatCurrency, getErrorMessage } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useCartStore, type SelectedAddon } from '@/stores/cart'
 import { useToastStore } from '@/stores/toast'
-import type { Category, Favorite, Product, Restaurant } from '@/types'
+import type { Category, Favorite, Plan, Product, Restaurant, ReviewItem } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -39,6 +45,8 @@ const restaurantId = computed(() => String(route.params.id || ''))
 const restaurant = ref<Restaurant | null>(null)
 const categories = ref<Category[]>([])
 const products = ref<Product[]>([])
+const restaurantPlans = ref<Plan[]>([])
+const restaurantReviews = ref<ReviewItem[]>([])
 const favoriteEntry = ref<Favorite | null>(null)
 const selectedCategory = ref('')
 const searchDish = ref('')
@@ -46,7 +54,11 @@ const isPlanMode = ref(cart.isPlanRedemption)
 const loading = ref(true)
 const error = ref('')
 const togglingFav = ref(false)
-const isAiModalOpen = ref(false)
+const subscribingPlanId = ref<string | null>(null)
+
+const newReviewRating = ref(5)
+const newReviewComment = ref('')
+const submittingReview = ref(false)
 
 const selectedDish = ref<Product | null>(null)
 const dishModalOpen = ref(false)
@@ -95,6 +107,45 @@ const highlightProducts = computed(() => {
   if (selectedCategory.value || searchDish.value.trim()) return []
   return filteredProducts.value.slice(0, 4)
 })
+
+const restaurantAvgRating = computed<number | null>(() => {
+  if (restaurantReviews.value.length === 0) return null
+  const sum = restaurantReviews.value.reduce((acc, r) => acc + r.rating, 0)
+  return sum / restaurantReviews.value.length
+})
+
+const ratingDistribution = computed(() => {
+  const total = restaurantReviews.value.length
+  return [5, 4, 3, 2, 1].map((stars) => {
+    const count = restaurantReviews.value.filter((r) => Math.round(r.rating) === stars).length
+    const percentage = total > 0 ? Math.round((count / total) * 100) : 0
+    return { stars, count, percentage }
+  })
+})
+
+function getMealsPerMonth(plan: Plan): number {
+  return plan.mealsPerMonth && plan.mealsPerMonth > 0
+    ? plan.mealsPerMonth
+    : Math.max(1, plan.mealsPerWeek * 4)
+}
+
+function getPricePerMeal(plan: Plan): number {
+  return plan.monthlyPrice / getMealsPerMonth(plan)
+}
+
+function getInitials(name?: string): string {
+  if (!name) return 'CL'
+  return name
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((n) => n[0]?.toUpperCase())
+    .join('')
+}
+
+function scrollToSection(sectionId: string) {
+  document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' })
+}
 
 function hasRequiredCustomization(product: Product): boolean {
   return Boolean((product.addons && product.addons.length > 0) || product.allowsCutlery)
@@ -162,12 +213,6 @@ function handleDishConfirm(payload: {
   executeAddToCart(payload)
 }
 
-function handleAddFromAi(product: Product) {
-  isAiModalOpen.value = false
-  if (auth.isDriverOnly) return
-  openDishModal(product)
-}
-
 async function loadMenu() {
   loading.value = true
   error.value = ''
@@ -177,6 +222,8 @@ async function loadMenu() {
       api.get<Restaurant>(`/restaurantes/${restaurantId.value}`),
       api.get<Product[]>(`/restaurantes/${restaurantId.value}/cardapio`),
       api.get<Category[]>('/categorias'),
+      api.get<Plan[]>(`/restaurantes/${restaurantId.value}/planos`),
+      api.get<ReviewItem[]>(`/restaurantes/${restaurantId.value}/avaliacoes`),
     ]
 
     if (auth.isAuthenticated && !auth.isDriverOnly) {
@@ -197,13 +244,79 @@ async function loadMenu() {
       categories.value = (results[2].value as { data: Category[] }).data
     }
     if (results[3]?.status === 'fulfilled') {
-      const favs = (results[3].value as { data: Favorite[] }).data
+      restaurantPlans.value = (results[3].value as { data: Plan[] }).data
+    } else {
+      restaurantPlans.value = []
+    }
+    if (results[4]?.status === 'fulfilled') {
+      restaurantReviews.value = (results[4].value as { data: ReviewItem[] }).data
+    } else {
+      restaurantReviews.value = []
+    }
+    if (results[5]?.status === 'fulfilled') {
+      const favs = (results[5].value as { data: Favorite[] }).data
       favoriteEntry.value = favs.find((f) => f.restaurantId === restaurantId.value) ?? null
     }
   } catch (err) {
     error.value = getErrorMessage(err, 'Não foi possível carregar o cardápio do restaurante.')
   } finally {
     loading.value = false
+  }
+}
+
+async function handleSubscribePlan(plan: Plan) {
+  if (!auth.isAuthenticated) {
+    await router.push({ path: '/login', query: { redirect: route.fullPath } })
+    return
+  }
+
+  subscribingPlanId.value = plan.id
+  try {
+    await api.post('/assinaturas', { planId: plan.id })
+    toast.success(
+      `Assinatura do plano "${plan.name}" ativada com sucesso! Acesse Minha Conta para programar entregas.`,
+      'Bem-vindo ao Clube!',
+    )
+  } catch (err) {
+    toast.error(getErrorMessage(err, 'Não foi possível assinar o plano.'))
+  } finally {
+    subscribingPlanId.value = null
+  }
+}
+
+async function handleSubmitRestaurantReview() {
+  if (!restaurant.value) return
+  if (!auth.isAuthenticated) {
+    await router.push({ path: '/login', query: { redirect: route.fullPath } })
+    return
+  }
+  if (!newReviewComment.value.trim()) {
+    toast.warning('Escreva seu comentário sobre a experiência no restaurante.')
+    return
+  }
+
+  submittingReview.value = true
+  try {
+    const { data } = await api.post<ReviewItem>('/avaliacoes/clientes', {
+      restaurantId: restaurant.value.id,
+      rating: newReviewRating.value,
+      comment: newReviewComment.value.trim(),
+    })
+    restaurantReviews.value.unshift(data)
+    newReviewComment.value = ''
+    newReviewRating.value = 5
+    toast.success('Avaliação publicada com sucesso!')
+  } catch (err) {
+    toast.error(getErrorMessage(err, 'Não foi possível enviar a avaliação.'))
+  } finally {
+    submittingReview.value = false
+  }
+}
+
+async function scrollToHashTarget() {
+  if (route.hash === '#planos' || route.hash === '#avaliacoes' || route.hash === '#cardapio') {
+    await nextTick()
+    scrollToSection(route.hash.slice(1))
   }
 }
 
@@ -235,8 +348,21 @@ async function handleToggleFavorite() {
   }
 }
 
-onMounted(() => {
-  void loadMenu()
+watch(restaurantId, async () => {
+  await loadMenu()
+  await scrollToHashTarget()
+})
+
+watch(
+  () => route.hash,
+  () => {
+    void scrollToHashTarget()
+  },
+)
+
+onMounted(async () => {
+  await loadMenu()
+  await scrollToHashTarget()
 })
 </script>
 
@@ -302,6 +428,25 @@ onMounted(() => {
                   >
                     Raio {{ restaurant.deliveryRadiusKm }} km
                   </span>
+                  <button
+                    v-if="restaurantAvgRating !== null"
+                    type="button"
+                    class="inline-flex items-center gap-1 rounded-full bg-white/20 px-2.5 py-0.5 text-[11px] font-bold backdrop-blur-md transition hover:bg-white/30"
+                    @click="scrollToSection('avaliacoes')"
+                  >
+                    <Star class="h-3 w-3 fill-amber-300 text-amber-300" />
+                    <span class="tabular-nums">{{ restaurantAvgRating.toFixed(1) }}</span>
+                    <span class="opacity-85">({{ restaurantReviews.length }})</span>
+                  </button>
+                  <button
+                    v-if="restaurantPlans.length > 0"
+                    type="button"
+                    class="inline-flex items-center gap-1 rounded-full bg-fresh-600/90 px-2.5 py-0.5 text-[11px] font-bold text-white backdrop-blur-md transition hover:bg-fresh-600"
+                    @click="scrollToSection('planos')"
+                  >
+                    <Sparkles class="h-3 w-3" />
+                    <span>{{ restaurantPlans.length }} {{ restaurantPlans.length === 1 ? 'plano' : 'planos' }}</span>
+                  </button>
                 </div>
                 <h1 class="font-display text-2xl font-extrabold tracking-tight sm:text-3xl">
                   {{ restaurant.name }}
@@ -312,15 +457,6 @@ onMounted(() => {
               </div>
 
               <div class="flex flex-wrap items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  class="inline-flex h-10 items-center gap-2 rounded-xl bg-gradient-to-r from-brand-500 to-amber-500 px-4 text-xs font-bold text-white shadow-lg transition hover:brightness-110"
-                  @click="isAiModalOpen = true"
-                >
-                  <Sparkles class="h-4 w-4" />
-                  <span>Chef & Nutricionista IA</span>
-                </button>
-
                 <button
                   v-if="!auth.isDriverOnly"
                   type="button"
@@ -351,9 +487,38 @@ onMounted(() => {
           </div>
         </section>
 
+        <!-- Section Navigation Bar -->
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-4 py-2 text-xs font-bold text-ink transition hover:border-brand-400 hover:text-brand-600"
+            @click="scrollToSection('cardapio')"
+          >
+            <UtensilsCrossed class="h-3.5 w-3.5 text-brand-600" />
+            <span>Cardápio ({{ activeProducts.length }})</span>
+          </button>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-4 py-2 text-xs font-bold text-ink transition hover:border-fresh-500 hover:text-fresh-700 dark:hover:text-fresh-400"
+            @click="scrollToSection('planos')"
+          >
+            <Sparkles class="h-3.5 w-3.5 text-fresh-600" />
+            <span>Planos do Restaurante ({{ restaurantPlans.length }})</span>
+          </button>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-4 py-2 text-xs font-bold text-ink transition hover:border-amber-400 hover:text-amber-600 dark:hover:text-amber-400"
+            @click="scrollToSection('avaliacoes')"
+          >
+            <Star class="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+            <span>Avaliações ({{ restaurantReviews.length }})</span>
+          </button>
+        </div>
+
         <!-- 3-Column Wolt/DoorDash Layout on Desktop (xl+) -->
         <div
-          class="grid gap-6 items-start"
+          id="cardapio"
+          class="grid gap-6 items-start scroll-mt-20"
           :class="!auth.isDriverOnly ? 'xl:grid-cols-[200px_1fr_340px]' : 'xl:grid-cols-[200px_1fr]'"
         >
           <!-- Column 1 (Left Sticky): Vertical Category Index -->
@@ -644,6 +809,251 @@ onMounted(() => {
           </div>
         </div>
 
+        <!-- Restaurant Plans Section (All Plans of This Restaurant) -->
+        <section id="planos" class="space-y-5 border-t border-line pt-8 scroll-mt-20">
+          <div class="flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
+            <div>
+              <AppBadge variant="fresh" size="sm" dot class="mb-2">
+                Assinaturas da Loja
+              </AppBadge>
+              <h2 class="font-display text-xl font-extrabold text-ink sm:text-2xl">
+                Planos de {{ restaurant.name }}
+              </h2>
+              <p class="mt-1 text-xs text-ink-muted sm:text-sm">
+                Todos os planos ativos cadastrados por este restaurante para resgate direto no cardápio.
+              </p>
+            </div>
+            <RouterLink
+              v-if="auth.isAuthenticated && !auth.isDriverOnly"
+              to="/conta?tab=assinaturas"
+              class="text-xs font-bold text-fresh-700 hover:underline dark:text-fresh-400"
+            >
+              Gerenciar minhas assinaturas →
+            </RouterLink>
+          </div>
+
+          <div
+            v-if="restaurantPlans.length > 0"
+            class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3"
+          >
+            <AppCard
+              v-for="plan in restaurantPlans"
+              :key="plan.id"
+              padding="lg"
+              class="flex flex-col justify-between"
+            >
+              <div>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <AppBadge variant="fresh" size="sm">
+                    {{ plan.mealsPerWeek }} marmitas / semana
+                  </AppBadge>
+                  <AppBadge variant="neutral" size="xs">
+                    {{ getMealsPerMonth(plan) }}/mês
+                  </AppBadge>
+                </div>
+
+                <h3 class="mt-4 font-display text-lg font-extrabold text-ink">
+                  {{ plan.name }}
+                </h3>
+                <p class="mt-1.5 text-xs leading-relaxed text-ink-secondary">
+                  {{ plan.description || 'Refeições balanceadas entregues na janela ideal para sua rotina.' }}
+                </p>
+
+                <div class="mt-4 rounded-2xl border border-line bg-surface-subtle p-4">
+                  <div class="flex items-baseline gap-1">
+                    <span class="font-display text-2xl font-extrabold text-ink tabular-nums">
+                      {{ formatCurrency(plan.monthlyPrice) }}
+                    </span>
+                    <span class="text-xs font-medium text-ink-muted">/mês</span>
+                  </div>
+                  <p class="mt-1 text-xs font-bold text-fresh-700 dark:text-fresh-400 tabular-nums">
+                    Apenas {{ formatCurrency(getPricePerMeal(plan)) }} por marmita
+                  </p>
+                </div>
+
+                <ul class="mt-4 space-y-2 text-xs text-ink-secondary">
+                  <li class="flex items-center gap-2">
+                    <Check class="h-4 w-4 shrink-0 text-fresh-600" />
+                    <span>Resgate direto no cardápio desta loja</span>
+                  </li>
+                  <li v-if="plan.deliveryWindow" class="flex items-center gap-2">
+                    <Clock class="h-4 w-4 shrink-0 text-fresh-600" />
+                    <span>Janela: {{ plan.deliveryWindow }}</span>
+                  </li>
+                  <li v-if="plan.allowedDays" class="flex items-center gap-2">
+                    <CalendarDays class="h-4 w-4 shrink-0 text-fresh-600" />
+                    <span>Dias: {{ plan.allowedDays }}</span>
+                  </li>
+                  <li class="flex items-center gap-2">
+                    <Truck class="h-4 w-4 shrink-0 text-fresh-600" />
+                    <span>
+                      {{ plan.deliveryFee && plan.deliveryFee > 0 ? `Taxa de entrega: ${formatCurrency(plan.deliveryFee)}` : 'Entrega inclusa no plano' }}
+                    </span>
+                  </li>
+                </ul>
+                <p v-if="plan.cancellationPolicy" class="mt-3 text-[11px] text-ink-muted">
+                  {{ plan.cancellationPolicy }}
+                </p>
+              </div>
+
+              <div v-if="!auth.isDriverOnly" class="mt-5 pt-2">
+                <AppButton
+                  variant="fresh"
+                  size="md"
+                  block
+                  :loading="subscribingPlanId === plan.id"
+                  @click="handleSubscribePlan(plan)"
+                >
+                  Assinar plano
+                </AppButton>
+              </div>
+            </AppCard>
+          </div>
+
+          <AppEmptyState
+            v-else
+            :icon="Sparkles"
+            title="Nenhum plano cadastrado neste restaurante"
+            description="Este restaurante ainda não publicou pacotes de assinatura recorrente."
+          />
+        </section>
+
+        <!-- Restaurant Customer Reviews Section (All Reviews of This Restaurant) -->
+        <section id="avaliacoes" class="space-y-6 border-t border-line pt-8 pb-4 scroll-mt-20">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 class="font-display text-xl font-extrabold text-ink sm:text-2xl">
+                Avaliações de {{ restaurant.name }}
+              </h2>
+              <p class="text-xs text-ink-muted sm:text-sm">
+                Todas as avaliações publicadas por clientes deste restaurante.
+              </p>
+            </div>
+            <AppBadge variant="brand" size="sm">
+              {{ restaurantReviews.length }} {{ restaurantReviews.length === 1 ? 'avaliação' : 'avaliações' }}
+            </AppBadge>
+          </div>
+
+          <div class="grid gap-5 lg:grid-cols-12 items-start">
+            <!-- Rating Summary + New Review Form -->
+            <div class="space-y-4 lg:col-span-5">
+              <AppCard padding="lg" class="space-y-4">
+                <div class="flex items-center gap-4">
+                  <div class="text-center">
+                    <p class="font-display text-4xl font-extrabold text-ink tabular-nums">
+                      {{ restaurantAvgRating !== null ? restaurantAvgRating.toFixed(1) : '—' }}
+                    </p>
+                    <p class="text-[11px] font-semibold text-ink-muted">de 5,0</p>
+                  </div>
+                  <div class="space-y-1">
+                    <StarRating
+                      :model-value="Math.round(restaurantAvgRating ?? 0)"
+                      readonly
+                      size="md"
+                    />
+                    <p class="text-xs text-ink-secondary">
+                      Baseado em {{ restaurantReviews.length }} {{ restaurantReviews.length === 1 ? 'avaliação' : 'avaliações' }}
+                    </p>
+                  </div>
+                </div>
+
+                <div class="space-y-1.5 border-t border-line pt-3">
+                  <div
+                    v-for="row in ratingDistribution"
+                    :key="row.stars"
+                    class="flex items-center gap-2 text-xs"
+                  >
+                    <span class="w-8 font-bold text-ink-secondary tabular-nums">{{ row.stars }} ★</span>
+                    <div class="h-2 flex-1 overflow-hidden rounded-full bg-surface-muted">
+                      <div
+                        class="h-full rounded-full bg-amber-400 transition-all duration-300"
+                        :style="{ width: `${row.percentage}%` }"
+                      />
+                    </div>
+                    <span class="w-8 text-right text-[11px] text-ink-muted tabular-nums">{{ row.count }}</span>
+                  </div>
+                </div>
+              </AppCard>
+
+              <AppCard v-if="!auth.isDriverOnly" padding="lg" class="space-y-3">
+                <div class="flex items-center gap-2">
+                  <MessageSquare class="h-4 w-4 text-brand-600" />
+                  <h3 class="font-display text-sm font-extrabold text-ink">
+                    Avaliar {{ restaurant.name }}
+                  </h3>
+                </div>
+
+                <form v-if="auth.isAuthenticated" class="space-y-3" @submit.prevent="handleSubmitRestaurantReview">
+                  <div class="flex items-center justify-between rounded-xl border border-line bg-surface-subtle px-3 py-2">
+                    <span class="text-xs font-semibold text-ink-secondary">Sua nota</span>
+                    <StarRating v-model="newReviewRating" size="md" show-value />
+                  </div>
+                  <textarea
+                    v-model="newReviewComment"
+                    rows="3"
+                    required
+                    placeholder="Conte como foi o sabor, tempero, embalagem e entrega..."
+                    class="w-full rounded-xl border border-line-strong bg-surface px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-muted focus:border-brand-600 focus:outline-none"
+                  />
+                  <AppButton type="submit" variant="primary" size="sm" block :loading="submittingReview">
+                    <Send class="h-3.5 w-3.5" />
+                    Publicar avaliação
+                  </AppButton>
+                </form>
+
+                <div v-else class="space-y-2 text-xs text-ink-secondary">
+                  <p>Entre na sua conta para avaliar sua experiência com este restaurante.</p>
+                  <RouterLink
+                    :to="{ path: '/login', query: { redirect: `${route.path}#avaliacoes` } }"
+                    class="inline-flex items-center gap-1 font-bold text-brand-600 hover:underline dark:text-brand-400"
+                  >
+                    Entrar para avaliar →
+                  </RouterLink>
+                </div>
+              </AppCard>
+            </div>
+
+            <!-- All Restaurant Reviews List -->
+            <div class="lg:col-span-7">
+              <div v-if="restaurantReviews.length > 0" class="grid gap-4 sm:grid-cols-2">
+                <AppCard
+                  v-for="rev in restaurantReviews"
+                  :key="rev.id"
+                  padding="md"
+                  class="space-y-3"
+                >
+                  <div class="flex items-start justify-between gap-2">
+                    <div class="flex items-center gap-2.5 min-w-0">
+                      <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-100 font-display text-xs font-extrabold text-brand-800 dark:bg-brand-900/60 dark:text-brand-200">
+                        {{ getInitials(rev.authorName) }}
+                      </span>
+                      <div class="min-w-0">
+                        <p class="truncate text-sm font-bold text-ink">
+                          {{ rev.authorName || 'Cliente Verificado' }}
+                        </p>
+                        <p v-if="rev.createdAt" class="text-[11px] text-ink-muted tabular-nums">
+                          {{ new Date(rev.createdAt).toLocaleDateString('pt-BR') }}
+                        </p>
+                      </div>
+                    </div>
+                    <StarRating :model-value="rev.rating" readonly size="sm" />
+                  </div>
+                  <p class="text-sm leading-relaxed text-ink-secondary">
+                    “{{ rev.comment }}”
+                  </p>
+                </AppCard>
+              </div>
+
+              <AppEmptyState
+                v-else
+                :icon="Star"
+                title="Ainda sem avaliações para este restaurante"
+                description="Seja o primeiro a avaliar o cardápio e a entrega desta loja."
+              />
+            </div>
+          </div>
+        </section>
+
         <DishCustomizeModal
           :open="dishModalOpen"
           :product="selectedDish"
@@ -661,15 +1071,6 @@ onMounted(() => {
           variant="primary"
           @confirm="pendingCartAction && executeAddToCart(pendingCartAction)"
           @cancel="pendingCartAction = null"
-        />
-
-        <AiMarmitaAssistantModal
-          :is-open="isAiModalOpen"
-          :restaurant-id="restaurant.id"
-          :restaurant-name="restaurant.name"
-          :available-products="products"
-          @close="isAiModalOpen = false"
-          @add-to-cart="handleAddFromAi"
         />
       </template>
     </div>

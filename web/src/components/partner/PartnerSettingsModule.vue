@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { AlertTriangle, MapPin, Plus, Store, Trash2, Upload, Users } from 'lucide-vue-next'
+import { AlertTriangle, MapPin, Plus, Search, Store, Trash2, Upload, Users } from 'lucide-vue-next'
 import AppCard from '@/components/ui/AppCard.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppInput from '@/components/ui/AppInput.vue'
@@ -35,11 +35,14 @@ const state = ref('SC')
 const openingHours = ref('Seg a Sáb das 10:30 às 15:30')
 const deliveryFee = ref(0)
 const deliveryRadiusKm = ref(8)
+const latitude = ref<number | null>(null)
+const longitude = ref<number | null>(null)
 const pixKey = ref('')
 const imageUrl = ref('')
 
 const savingInfo = ref(false)
 const uploadingLogo = ref(false)
+const lookingUpCep = ref(false)
 
 const newZoneNeighborhood = ref('')
 const newZoneFee = ref(5.9)
@@ -66,11 +69,40 @@ watch(
     openingHours.value = r.openingHours || 'Seg a Sáb das 10:30 às 15:30'
     deliveryFee.value = r.deliveryFee ?? 0
     deliveryRadiusKm.value = r.deliveryRadiusKm ?? 8
+    latitude.value = r.latitude ?? null
+    longitude.value = r.longitude ?? null
     pixKey.value = r.pixKey || ''
     imageUrl.value = r.imageUrl || ''
   },
   { immediate: true },
 )
+
+async function handleLookupCep() {
+  const clean = zipCode.value.replace(/\D/g, '')
+  if (clean.length !== 8) return
+  lookingUpCep.value = true
+  try {
+    const { data } = await api.get<{
+      street: string
+      neighborhood: string
+      city: string
+      state: string
+      latitude?: number
+      longitude?: number
+    }>(`/geolocalizacao/cep/${clean}`)
+    if (data.street) street.value = data.street
+    if (data.neighborhood) neighborhood.value = data.neighborhood
+    if (data.city) city.value = data.city
+    if (data.state) state.value = data.state
+    latitude.value = typeof data.latitude === 'number' ? data.latitude : null
+    longitude.value = typeof data.longitude === 'number' ? data.longitude : null
+    toast.info('Endereço e localização atualizados pelo CEP.')
+  } catch {
+    // Permite edição manual
+  } finally {
+    lookingUpCep.value = false
+  }
+}
 
 const hasIncompleteFiscalInfo = computed(
   () =>
@@ -109,6 +141,13 @@ async function handleSaveInfo() {
     return
   }
 
+  const addressChanged =
+    street.value.trim().toLowerCase() !== (props.restaurant.addressStreet || '').trim().toLowerCase() ||
+    neighborhood.value.trim().toLowerCase() !== (props.restaurant.addressNeighborhood || '').trim().toLowerCase() ||
+    city.value.trim().toLowerCase() !== (props.restaurant.addressCity || '').trim().toLowerCase() ||
+    state.value.trim().toUpperCase() !== (props.restaurant.addressState || '').trim().toUpperCase() ||
+    zipCode.value.trim() !== (props.restaurant.addressZipCode || '').trim()
+
   savingInfo.value = true
   try {
     await api.put(`/restaurantes/${props.restaurant.id}`, {
@@ -123,9 +162,11 @@ async function handleSaveInfo() {
       addressNeighborhood: neighborhood.value.trim(),
       addressCity: city.value.trim(),
       addressState: state.value.trim().toUpperCase(),
+      latitude: addressChanged ? null : latitude.value,
+      longitude: addressChanged ? null : longitude.value,
       openingHours: openingHours.value.trim() || 'Seg a Sáb das 10:30 às 15:30',
       deliveryFee: Number(deliveryFee.value) || 0,
-      deliveryRadiusKm: Number(deliveryRadiusKm.value) || 8,
+      deliveryRadiusKm: Math.max(1, Number(deliveryRadiusKm.value) || 8),
       pixKey: pixKey.value.trim() || null,
       imageUrl: imageUrl.value.trim() || null,
     })
@@ -255,8 +296,13 @@ async function handleRemoveStaff(memberId: string) {
           <AppInput v-model="document" label="CNPJ" required placeholder="00.000.000/0001-00" />
         </div>
 
-        <div class="grid gap-3 sm:grid-cols-6">
-          <AppInput v-model="zipCode" label="CEP" required class="sm:col-span-2" />
+        <div class="grid gap-3 sm:grid-cols-6 items-end">
+          <div class="sm:col-span-2 flex items-end gap-1.5">
+            <AppInput v-model="zipCode" label="CEP" required class="flex-1" @blur="handleLookupCep" />
+            <AppButton type="button" variant="outline" size="md" :loading="lookingUpCep" @click="handleLookupCep">
+              <Search class="h-4 w-4" />
+            </AppButton>
+          </div>
           <AppInput v-model="street" label="Rua / Logradouro" required class="sm:col-span-3" />
           <AppInput v-model="number" label="Número" required class="sm:col-span-1" />
           <AppInput v-model="neighborhood" label="Bairro" required class="sm:col-span-2" />

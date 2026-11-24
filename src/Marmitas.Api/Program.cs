@@ -9,7 +9,6 @@ using Marmitas.Application.Financial;
 using Marmitas.Application.Orders;
 using Marmitas.Application.Restaurants.Queries;
 using Marmitas.Application.Users;
-using Marmitas.Infrastructure.Ai;
 using Marmitas.Infrastructure.Cache;
 using Marmitas.Infrastructure.Identity;
 using Marmitas.Infrastructure.Messaging;
@@ -60,8 +59,6 @@ builder.Services.AddSignalR();
 builder.Services.AddScoped<IRealtimeNotifier, SignalRRealtimeNotifier>();
 builder.Services.AddHostedService<PlatformBackgroundWorker>();
 builder.Services.AddHealthChecks();
-
-builder.Services.AddHttpClient<IAiAssistantService, GeminiAiAssistantService>();
 
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
 

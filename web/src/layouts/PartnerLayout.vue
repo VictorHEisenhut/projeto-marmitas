@@ -47,7 +47,7 @@ const mobileNavOpen = ref(false)
 
 const navItems: Array<{ id: PartnerModule; label: string; icon: typeof ClipboardList }> = [
   { id: 'orders', label: 'Gestor de Pedidos', icon: ClipboardList },
-  { id: 'menu', label: 'Cardápio & IA', icon: UtensilsCrossed },
+  { id: 'menu', label: 'Cardápio', icon: UtensilsCrossed },
   { id: 'plans', label: 'Planos da Loja', icon: Sparkles },
   { id: 'financials', label: 'Financeiro', icon: DollarSign },
   { id: 'settings', label: 'Loja, Zonas & Equipe', icon: Settings },

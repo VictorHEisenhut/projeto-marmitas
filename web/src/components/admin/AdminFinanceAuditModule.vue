@@ -50,7 +50,7 @@ const filteredAuditLogs = computed(() => {
       const text = `${log.action} ${log.details} ${log.entityName || ''}`.toLowerCase()
       if (auditCategory.value === 'orders') return text.includes('pedido') || text.includes('order') || text.includes('entrega')
       if (auditCategory.value === 'payments') return text.includes('pagament') || text.includes('estorn') || text.includes('repasse') || text.includes('pix')
-      if (auditCategory.value === 'users') return text.includes('usu') || text.includes('role') || text.includes('login') || text.includes('mfa')
+      if (auditCategory.value === 'users') return text.includes('usu') || text.includes('role') || text.includes('login')
       if (auditCategory.value === 'restaurants') return text.includes('restaur') || text.includes('card')
       return true
     })

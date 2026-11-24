@@ -12,13 +12,16 @@ namespace Marmitas.Api.Controllers;
 public class CouriersController : ControllerBase
 {
     private readonly IDeliveryRepository _deliveries;
+    private readonly IUserRepository _users;
     private readonly IRealtimeNotifier _realtimeNotifier;
 
     public CouriersController(
         IDeliveryRepository deliveries,
+        IUserRepository users,
         IRealtimeNotifier realtimeNotifier)
     {
         _deliveries = deliveries;
+        _users = users;
         _realtimeNotifier = realtimeNotifier;
     }
 
@@ -111,6 +114,17 @@ public class CouriersController : ControllerBase
     public async Task<IActionResult> GetAll()
     {
         var list = await _deliveries.GetAllCouriersAsync();
+        foreach (var courier in list)
+        {
+            if (NeedsNameResolution(courier.Name) && courier.UserId.HasValue)
+            {
+                var user = await _users.GetByIdAsync(courier.UserId.Value);
+                if (user != null && !IsInvalidDisplayName(user.Name))
+                {
+                    courier.Name = user.Name.Trim();
+                }
+            }
+        }
         return Ok(list);
     }
 
@@ -121,6 +135,15 @@ public class CouriersController : ControllerBase
         var courier = await _deliveries.GetCourierByIdAsync(id);
         if (courier == null)
             throw new Exception("Entregador não encontrado.");
+
+        if (NeedsNameResolution(courier.Name) && courier.UserId.HasValue)
+        {
+            var user = await _users.GetByIdAsync(courier.UserId.Value);
+            if (user != null && !IsInvalidDisplayName(user.Name))
+            {
+                courier.Name = user.Name.Trim();
+            }
+        }
 
         return Ok(courier);
     }
@@ -405,6 +428,36 @@ public class CouriersController : ControllerBase
         });
     }
 
+    private static bool IsInvalidDisplayName(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) || Guid.TryParse(value.Trim(), out _);
+    }
+
+    private static bool NeedsNameResolution(string? currentName)
+    {
+        return IsInvalidDisplayName(currentName) ||
+               string.Equals(currentName!.Trim(), "Entregador", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<string> ResolveCourierDisplayNameAsync(Guid userId, string? currentName = null)
+    {
+        if (!NeedsNameResolution(currentName))
+            return currentName!.Trim();
+
+        if (userId != Guid.Empty)
+        {
+            var user = await _users.GetByIdAsync(userId);
+            if (user != null && !IsInvalidDisplayName(user.Name))
+                return user.Name.Trim();
+        }
+
+        var claimName = User.FindFirstValue("name") ?? User.FindFirstValue(ClaimTypes.Name);
+        if (!IsInvalidDisplayName(claimName))
+            return claimName!.Trim();
+
+        return "Entregador";
+    }
+
     private async Task<Courier> EnsureCourierEntityAsync()
     {
         var userId = GetUserId();
@@ -414,11 +467,15 @@ public class CouriersController : ControllerBase
             courier = new Courier
             {
                 UserId = userId,
-                Name = User.Identity?.Name ?? "Entregador",
+                Name = await ResolveCourierDisplayNameAsync(userId),
                 Status = "Approved",
                 IsAvailable = true
             };
             await _deliveries.AddCourierAsync(courier);
+        }
+        else if (NeedsNameResolution(courier.Name))
+        {
+            courier.Name = await ResolveCourierDisplayNameAsync(userId, courier.Name);
         }
 
         return courier;

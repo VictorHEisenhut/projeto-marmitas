@@ -2,6 +2,7 @@ using System.Text.Json;
 using Marmitas.Application.Common.Interfaces;
 using Marmitas.Domain.Entities;
 using Marmitas.Domain.Enums;
+using Marmitas.Domain.ValueObjects;
 
 namespace Marmitas.Application.Restaurants.Queries;
 
@@ -113,6 +114,16 @@ public class RestaurantQueryService : IRestaurantQueryService
             ? request.OwnerId.Value
             : ownerId;
 
+        var resolvedPoint = GeoCalculator.ResolveAddressCoordinates(
+            request.Latitude,
+            request.Longitude,
+            request.AddressStreet,
+            request.AddressNeighborhood,
+            request.AddressCity,
+            request.AddressState,
+            request.AddressZipCode,
+            request.Name);
+
         var restaurant = new Restaurant(
             request.Name,
             request.Description ?? string.Empty,
@@ -127,13 +138,13 @@ public class RestaurantQueryService : IRestaurantQueryService
             AddressCity = request.AddressCity.Trim(),
             AddressState = request.AddressState.Trim().ToUpperInvariant(),
             AddressZipCode = request.AddressZipCode.Trim(),
-            Latitude = request.Latitude,
-            Longitude = request.Longitude,
+            Latitude = resolvedPoint.Latitude,
+            Longitude = resolvedPoint.Longitude,
             OpeningHours = string.IsNullOrWhiteSpace(request.OpeningHours)
                 ? "Seg a Sáb • 10:30 às 15:30"
                 : request.OpeningHours.Trim(),
-            DeliveryFee = request.DeliveryFee ?? 0m,
-            DeliveryRadiusKm = request.DeliveryRadiusKm ?? 12.0,
+            DeliveryFee = Math.Max(0m, request.DeliveryFee ?? 0m),
+            DeliveryRadiusKm = Math.Clamp(request.DeliveryRadiusKm ?? 8.0, 1.0, 100.0),
             BankName = request.BankName?.Trim(),
             BankAgency = request.BankAgency?.Trim(),
             BankAccount = request.BankAccount?.Trim(),
@@ -172,6 +183,14 @@ public class RestaurantQueryService : IRestaurantQueryService
             throw new Exception("O endereço completo do restaurante (CEP, Rua, Número, Bairro, Cidade e UF) é obrigatório.");
         }
 
+        var addressChanged =
+            !string.Equals(restaurant.AddressStreet, request.AddressStreet.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(restaurant.AddressNumber, request.AddressNumber.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(restaurant.AddressNeighborhood, request.AddressNeighborhood.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(restaurant.AddressCity, request.AddressCity.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(restaurant.AddressState, request.AddressState.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(restaurant.AddressZipCode, request.AddressZipCode.Trim(), StringComparison.OrdinalIgnoreCase);
+
         restaurant.Name = request.Name.Trim();
         restaurant.Description = (request.Description ?? string.Empty).Trim();
         restaurant.Document = request.Document.Trim();
@@ -184,11 +203,21 @@ public class RestaurantQueryService : IRestaurantQueryService
         restaurant.AddressState = request.AddressState.Trim().ToUpperInvariant();
         restaurant.AddressZipCode = request.AddressZipCode.Trim();
 
-        if (request.Latitude.HasValue) restaurant.Latitude = request.Latitude;
-        if (request.Longitude.HasValue) restaurant.Longitude = request.Longitude;
+        var resolvedPoint = GeoCalculator.ResolveAddressCoordinates(
+            addressChanged ? request.Latitude : (request.Latitude ?? restaurant.Latitude),
+            addressChanged ? request.Longitude : (request.Longitude ?? restaurant.Longitude),
+            restaurant.AddressStreet,
+            restaurant.AddressNeighborhood,
+            restaurant.AddressCity,
+            restaurant.AddressState,
+            restaurant.AddressZipCode,
+            restaurant.Name);
+        restaurant.Latitude = resolvedPoint.Latitude;
+        restaurant.Longitude = resolvedPoint.Longitude;
+
         if (!string.IsNullOrWhiteSpace(request.OpeningHours)) restaurant.OpeningHours = request.OpeningHours.Trim();
         if (request.DeliveryFee.HasValue) restaurant.DeliveryFee = Math.Max(0m, request.DeliveryFee.Value);
-        if (request.DeliveryRadiusKm.HasValue) restaurant.DeliveryRadiusKm = Math.Max(1.0, request.DeliveryRadiusKm.Value);
+        if (request.DeliveryRadiusKm.HasValue) restaurant.DeliveryRadiusKm = Math.Clamp(request.DeliveryRadiusKm.Value, 1.0, 100.0);
         if (request.BankName != null) restaurant.BankName = request.BankName.Trim();
         if (request.BankAgency != null) restaurant.BankAgency = request.BankAgency.Trim();
         if (request.BankAccount != null) restaurant.BankAccount = request.BankAccount.Trim();

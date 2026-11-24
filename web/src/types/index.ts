@@ -12,14 +12,12 @@ export interface User {
   email: string
   phone?: string | null
   status: string
-  mfaEnabled?: boolean
   roles: string[]
 }
 
 export interface LoginRequest {
   email: string
   password: string
-  mfaCode?: string
 }
 
 export interface RegisterRequest {
@@ -71,6 +69,7 @@ export interface Restaurant {
   openingHours?: string
   deliveryFee?: number
   deliveryRadiusKm?: number
+  distanceKm?: number | null
   bankName?: string | null
   bankAgency?: string | null
   bankAccount?: string | null
@@ -124,6 +123,7 @@ export interface Plan {
   deliveryFee?: number
   cancellationPolicy?: string
   isActive: boolean
+  subscribersCount?: number
 }
 
 export interface Subscription {
@@ -467,57 +467,6 @@ export interface CartDeliveryEstimate {
   routeSummary: string
 }
 
-export interface NutritionalEstimate {
-  calories: number
-  protein: number
-  carbs: number
-  fat: number
-}
-
-export interface AiRecommendationRequest {
-  restaurantId?: string | null
-  query: string
-  dietaryGoal?: string | null
-  maxPrice?: number | null
-}
-
-export interface AiRecommendationItem {
-  productId: string
-  productName: string
-  price: number
-  restaurantName?: string | null
-  whyRecommended: string
-  nutritionalEstimate: NutritionalEstimate
-  tags: string[]
-}
-
-export interface AiRecommendationResponse {
-  generalAdvice: string
-  recommendations: AiRecommendationItem[]
-  isLiveAi: boolean
-}
-
-export interface AiGenerateMarmitaRequest {
-  baseNameOrIngredients: string
-  targetCategory?: string | null
-  price?: number | null
-}
-
-export interface AiGenerateMarmitaResponse {
-  suggestedName: string
-  gourmetDescription: string
-  suggestedCategory: string
-  nutritionalEstimate: NutritionalEstimate
-  highlightIngredients: string[]
-  isLiveAi: boolean
-}
-
-export interface AiStatusResponse {
-  isConfigured: boolean
-  model: string
-  provider: string
-}
-
 export interface PaymentResponse {
   id: string
   orderId: string
@@ -539,10 +488,4 @@ export interface UserConsent {
   isGranted: boolean
   ipAddress?: string | null
   consentedAt: string
-}
-
-export interface MfaEnableResponse {
-  mfaEnabled: boolean
-  verificationCode?: string
-  message: string
 }

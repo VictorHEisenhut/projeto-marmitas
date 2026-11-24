@@ -2,10 +2,8 @@
 import { computed, ref } from 'vue'
 import {
   Edit3,
-  Loader2,
   Plus,
   Search,
-  Sparkles,
   Trash2,
   Upload,
   UtensilsCrossed,
@@ -19,9 +17,8 @@ import AppModal from '@/components/ui/AppModal.vue'
 import AppEmptyState from '@/components/ui/AppEmptyState.vue'
 import AppConfirmDialog from '@/components/ui/AppConfirmDialog.vue'
 import { api, formatCurrency, getErrorMessage, uploadFile } from '@/services/api'
-import { generateMarmitaWithAi } from '@/services/ai'
 import { useToastStore } from '@/stores/toast'
-import type { Category, NutritionalEstimate, Product } from '@/types'
+import type { Category, Product } from '@/types'
 
 const props = defineProps<{
   restaurantId: string
@@ -54,8 +51,6 @@ const cutleryPrice = ref<number | null>(null)
 const productAddons = ref<Array<{ name: string; extraPrice: number; maxQuantity: number }>>([])
 
 const uploadingImage = ref(false)
-const generatingWithAi = ref(false)
-const aiNutrition = ref<NutritionalEstimate | null>(null)
 const savingProduct = ref(false)
 const deleteTarget = ref<Product | null>(null)
 
@@ -96,7 +91,6 @@ function openCreateEditor() {
   cutleryHasExtraCost.value = false
   cutleryPrice.value = null
   productAddons.value = []
-  aiNutrition.value = null
   editorOpen.value = true
 }
 
@@ -116,7 +110,6 @@ function openEditEditor(product: Product) {
     extraPrice: a.extraPrice,
     maxQuantity: a.maxQuantity,
   }))
-  aiNutrition.value = null
   editorOpen.value = true
 }
 
@@ -141,43 +134,6 @@ async function handleUploadImage(event: Event) {
     toast.error(getErrorMessage(err, 'Não foi possível enviar a foto.'))
   } finally {
     uploadingImage.value = false
-  }
-}
-
-async function handleOptimizeWithAi() {
-  if (!productName.value.trim()) {
-    toast.warning('Digite o nome base ou ingredientes do prato para otimizar com IA.')
-    return
-  }
-
-  generatingWithAi.value = true
-  aiNutrition.value = null
-  try {
-    const selectedCat = props.categories.find((c) => c.id === productCategoryId.value)?.name
-    const res = await generateMarmitaWithAi({
-      baseNameOrIngredients: productName.value.trim(),
-      targetCategory: selectedCat || null,
-      price: productPrice.value || null,
-    })
-
-    if (res.suggestedName) productName.value = res.suggestedName
-    if (res.gourmetDescription) productDescription.value = res.gourmetDescription
-    aiNutrition.value = res.nutritionalEstimate
-
-    if (res.suggestedCategory && props.categories.length > 0) {
-      const match = props.categories.find(
-        (c) =>
-          c.name.toLowerCase().includes(res.suggestedCategory.toLowerCase()) ||
-          res.suggestedCategory.toLowerCase().includes(c.name.toLowerCase()),
-      )
-      if (match) productCategoryId.value = match.id
-    }
-
-    toast.success('Nome, descrição gourmet e macros otimizados pela IA!')
-  } catch (err) {
-    toast.error(getErrorMessage(err, 'Não foi possível otimizar com IA no momento.'))
-  } finally {
-    generatingWithAi.value = false
   }
 }
 
@@ -375,7 +331,7 @@ async function handleConfirmDelete() {
       v-else
       :icon="UtensilsCrossed"
       title="Nenhuma marmita encontrada"
-      description="Cadastre pratos com fotos apetitosas e use a IA do Gemini para gerar descrições irresistíveis."
+      description="Cadastre pratos com fotos apetitosas e descrições detalhadas para atrair mais clientes."
     >
       <template #action>
         <AppButton variant="primary" size="sm" @click="openCreateEditor">
@@ -444,19 +400,7 @@ async function handleConfirmDelete() {
           </div>
 
           <div class="space-y-1.5">
-            <div class="flex items-center justify-between gap-2">
-              <label class="block text-xs font-semibold text-ink-secondary">Nome ou ingredientes *</label>
-              <button
-                type="button"
-                :disabled="generatingWithAi || !productName.trim()"
-                class="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-brand-600 to-amber-500 px-2.5 py-1 text-[11px] font-bold text-white shadow-xs transition hover:brightness-110 disabled:opacity-45"
-                @click="handleOptimizeWithAi"
-              >
-                <Loader2 v-if="generatingWithAi" class="h-3.5 w-3.5 animate-spin" />
-                <Sparkles v-else class="h-3.5 w-3.5" />
-                <span>{{ generatingWithAi ? 'Otimizando...' : 'Otimizar com IA (Gemini)' }}</span>
-              </button>
-            </div>
+            <label class="block text-xs font-semibold text-ink-secondary">Nome ou ingredientes *</label>
             <input
               v-model="productName"
               type="text"
@@ -475,34 +419,6 @@ async function handleConfirmDelete() {
               placeholder="Ingredientes, acompanhamentos e temperos..."
               class="w-full rounded-xl border border-line-strong bg-surface px-3.5 py-2.5 text-sm text-ink focus:border-brand-600 focus:outline-none"
             />
-          </div>
-
-          <div
-            v-if="aiNutrition"
-            class="rounded-2xl border border-amber-200 bg-amber-50/70 p-3 text-xs dark:border-amber-800/60 dark:bg-amber-950/30"
-          >
-            <div class="flex items-center gap-1.5 font-bold text-amber-900 dark:text-amber-300">
-              <Sparkles class="h-4 w-4 text-brand-600" />
-              <span>Estimativa Nutricional (Gemini IA)</span>
-            </div>
-            <div class="mt-2 grid grid-cols-4 gap-1.5 text-center">
-              <div class="rounded-lg bg-surface p-1.5 border border-line">
-                <p class="text-[10px] text-ink-muted">Kcal</p>
-                <p class="font-bold text-amber-700 dark:text-amber-400">~{{ aiNutrition.calories }}</p>
-              </div>
-              <div class="rounded-lg bg-surface p-1.5 border border-line">
-                <p class="text-[10px] text-ink-muted">Prot</p>
-                <p class="font-bold text-fresh-700 dark:text-fresh-400">{{ aiNutrition.protein }}g</p>
-              </div>
-              <div class="rounded-lg bg-surface p-1.5 border border-line">
-                <p class="text-[10px] text-ink-muted">Carb</p>
-                <p class="font-bold text-ink">{{ aiNutrition.carbs }}g</p>
-              </div>
-              <div class="rounded-lg bg-surface p-1.5 border border-line">
-                <p class="text-[10px] text-ink-muted">Gord</p>
-                <p class="font-bold text-ink">{{ aiNutrition.fat }}g</p>
-              </div>
-            </div>
           </div>
 
           <div class="rounded-2xl border border-line bg-surface-subtle p-3">
@@ -616,7 +532,7 @@ async function handleConfirmDelete() {
                 </h4>
 
                 <p class="text-xs leading-relaxed text-ink-secondary line-clamp-3">
-                  {{ productDescription.trim() || 'Descreva os ingredientes ou clique em Otimizar com IA para uma descrição gourmet.' }}
+                  {{ productDescription.trim() || 'Descreva os ingredientes, acompanhamentos e temperos da marmita.' }}
                 </p>
               </div>
 

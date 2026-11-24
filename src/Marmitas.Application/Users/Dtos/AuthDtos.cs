@@ -15,7 +15,6 @@ public class LoginRequest
 {
     public string Email { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
-    public string? MfaCode { get; set; }
 }
 
 public class UserResponse
@@ -25,7 +24,6 @@ public class UserResponse
     public string Email { get; set; } = string.Empty;
     public string? Phone { get; set; }
     public string Status { get; set; } = string.Empty;
-    public bool MfaEnabled { get; set; }
     public List<string> Roles { get; set; } = new();
 }
 

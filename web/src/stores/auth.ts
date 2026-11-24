@@ -202,7 +202,6 @@ export const useAuthStore = defineStore('auth', () => {
     const { data } = await api.post<LoginResponse>('/auth/login', {
       email: credentials.email.trim().toLowerCase(),
       password: credentials.password,
-      mfaCode: credentials.mfaCode?.trim() || undefined,
     })
     setSession(data)
     return data

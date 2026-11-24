@@ -50,6 +50,13 @@ const mapEmbedUrl = computed(() => {
 })
 
 const pinDigits = computed(() => (props.order.confirmationPin || '').slice(0, 4).split(''))
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const courierDisplayName = computed(() => {
+  const name = props.trackingInfo?.courierName?.trim()
+  if (!name || uuidPattern.test(name)) return null
+  return name
+})
 </script>
 
 <template>
@@ -149,8 +156,8 @@ const pinDigits = computed(() => (props.order.confirmationPin || '').slice(0, 4)
             <p class="text-[10px] font-bold uppercase tracking-wider text-amber-900 dark:text-amber-300">
               PIN de entrega
             </p>
-            <p v-if="trackingInfo?.courierName" class="truncate text-xs font-semibold text-ink">
-              Entregador: {{ trackingInfo.courierName }}
+            <p v-if="courierDisplayName" class="truncate text-xs font-semibold text-ink">
+              Entregador: {{ courierDisplayName }}
             </p>
             <p v-else class="text-[11px] text-amber-900/80 dark:text-amber-300/80">
               Informe ao receber

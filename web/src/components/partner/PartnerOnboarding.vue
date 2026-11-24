@@ -26,6 +26,10 @@ const complement = ref('')
 const neighborhood = ref('')
 const city = ref('Blumenau')
 const state = ref('SC')
+const deliveryRadiusKm = ref(8)
+const deliveryFee = ref(0)
+const latitude = ref<number | null>(null)
+const longitude = ref<number | null>(null)
 const saving = ref(false)
 const lookingUpCep = ref(false)
 
@@ -39,11 +43,15 @@ async function handleLookupCep() {
       neighborhood: string
       city: string
       state: string
+      latitude?: number
+      longitude?: number
     }>(`/geolocalizacao/cep/${clean}`)
     if (data.street) street.value = data.street
     if (data.neighborhood) neighborhood.value = data.neighborhood
     if (data.city) city.value = data.city
     if (data.state) state.value = data.state
+    latitude.value = typeof data.latitude === 'number' ? data.latitude : null
+    longitude.value = typeof data.longitude === 'number' ? data.longitude : null
   } catch {
     // Allow manual input
   } finally {
@@ -82,6 +90,10 @@ async function handleCreate() {
       addressNeighborhood: neighborhood.value.trim(),
       addressCity: city.value.trim(),
       addressState: state.value.trim().toUpperCase(),
+      latitude: latitude.value,
+      longitude: longitude.value,
+      deliveryRadiusKm: Math.max(1, Number(deliveryRadiusKm.value) || 8),
+      deliveryFee: Math.max(0, Number(deliveryFee.value) || 0),
     })
     toast.success('Restaurante cadastrado e pronto para operação!')
     emit('created', data)
@@ -139,6 +151,25 @@ async function handleCreate() {
           </div>
 
           <AppInput v-model="complement" label="Complemento (opcional)" placeholder="Loja 1, Fundos" />
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <AppInput
+            v-model.number="deliveryRadiusKm"
+            label="Raio de entrega (km)"
+            type="number"
+            step="0.5"
+            min="1"
+            max="50"
+            required
+          />
+          <AppInput
+            v-model.number="deliveryFee"
+            label="Taxa base de entrega (R$)"
+            type="number"
+            step="0.5"
+            min="0"
+          />
         </div>
 
         <div class="space-y-1.5">

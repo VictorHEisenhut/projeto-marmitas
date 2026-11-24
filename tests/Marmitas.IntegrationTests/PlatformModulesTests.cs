@@ -376,4 +376,281 @@ public class PlatformModulesTests : IClassFixture<WebApplicationFactory<Program>
         var subscribeBRes = await customerClient.PostAsJsonAsync("/api/assinaturas", new { planId = planBId });
         Assert.Equal(HttpStatusCode.Created, subscribeBRes.StatusCode);
     }
+
+    [Fact]
+    public async Task PlanosEAvaliacoes_MaisAcessadosNaHomeETodosNoRestaurante()
+    {
+        var ownerClient = _factory.CreateClient();
+        var customerClient = _factory.CreateClient();
+        var driverClient = _factory.CreateClient();
+
+        async Task<(Guid UserId, string Token)> CriarUsuarioAsync(HttpClient c, string email, string role)
+        {
+            const string pwd = "SenhaForte123";
+            await c.PostAsJsonAsync("/api/v1/auth/registro", new RegisterRequest
+            {
+                Name = $"User {role}",
+                Email = email,
+                Password = pwd,
+                Role = role
+            });
+
+            var loginRes = await c.PostAsJsonAsync("/api/v1/auth/login", new LoginRequest
+            {
+                Email = email,
+                Password = pwd
+            });
+            loginRes.EnsureSuccessStatusCode();
+            var loginJson = await loginRes.Content.ReadFromJsonAsync<JsonElement>();
+            return (
+                loginJson.GetProperty("user").GetProperty("id").GetGuid(),
+                loginJson.GetProperty("accessToken").GetString()!
+            );
+        }
+
+        var (ownerId, ownerToken) = await CriarUsuarioAsync(ownerClient, $"ownerFeat_{Guid.NewGuid()}@test.com", "restaurant_owner");
+        var (_, customerToken) = await CriarUsuarioAsync(customerClient, $"cliFeat_{Guid.NewGuid()}@test.com", "customer");
+        var (_, driverToken) = await CriarUsuarioAsync(driverClient, $"drvFeat_{Guid.NewGuid()}@test.com", "driver");
+
+        ownerClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ownerToken);
+        customerClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", customerToken);
+        driverClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", driverToken);
+
+        Guid restId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var rest = new Restaurant("Restaurante Destaque", "Caseira", "33333333000133", ownerId);
+            rest.Approve();
+            context.Restaurants.Add(rest);
+            await context.SaveChangesAsync();
+            restId = rest.Id;
+        }
+
+        var createdPlanIds = new List<Guid>();
+        for (var i = 1; i <= 4; i++)
+        {
+            var planRes = await ownerClient.PostAsJsonAsync("/api/planos", new
+            {
+                restaurantId = restId,
+                name = $"Plano Loja {i}",
+                description = $"Descricao plano {i}",
+                mealsPerWeek = i + 1,
+                monthlyPrice = 190m + (i * 40m)
+            });
+            Assert.Equal(HttpStatusCode.Created, planRes.StatusCode);
+            var planJson = await planRes.Content.ReadFromJsonAsync<JsonElement>();
+            createdPlanIds.Add(planJson.GetProperty("id").GetGuid());
+        }
+
+        // Assina especificamente o 4o plano (mais caro) para ele subir para os mais acessados
+        var popularPlanId = createdPlanIds[3];
+        var subRes = await customerClient.PostAsJsonAsync("/api/assinaturas", new { planId = popularPlanId });
+        Assert.Equal(HttpStatusCode.Created, subRes.StatusCode);
+
+        var anonClient = _factory.CreateClient();
+
+        // Todos os 4 planos aparecem no endpoint do restaurante
+        var restPlans = await anonClient.GetFromJsonAsync<JsonElement>($"/api/restaurantes/{restId}/planos");
+        var restPlanIds = restPlans.EnumerateArray().Select(p => p.GetProperty("id").GetGuid()).ToList();
+        Assert.Equal(4, restPlanIds.Count);
+        foreach (var pid in createdPlanIds)
+        {
+            Assert.Contains(pid, restPlanIds);
+        }
+
+        // Mais acessados retorna no maximo 3 e inclui o plano assinado com subscribersCount >= 1
+        var topPlans = await anonClient.GetFromJsonAsync<JsonElement>("/api/planos/mais-acessados?limit=3");
+        var topPlansList = topPlans.EnumerateArray().ToList();
+        Assert.True(topPlansList.Count <= 3);
+        Assert.Contains(topPlansList, p =>
+            p.GetProperty("id").GetGuid() == popularPlanId &&
+            p.GetProperty("subscribersCount").GetInt32() >= 1);
+
+        // Avaliacoes: 2 de clientes (nota 5 e nota 3) e 1 de entregador (nao deve aparecer no restaurante)
+        var revCust5 = await customerClient.PostAsJsonAsync("/api/avaliacoes/clientes", new
+        {
+            restaurantId = restId,
+            rating = 5,
+            comment = "Excelente marmita e entrega pontual!"
+        });
+        Assert.Equal(HttpStatusCode.Created, revCust5.StatusCode);
+
+        var revCust3 = await customerClient.PostAsJsonAsync("/api/avaliacoes/clientes", new
+        {
+            restaurantId = restId,
+            rating = 3,
+            comment = "Sabor bom, mas atrasou um pouco."
+        });
+        Assert.Equal(HttpStatusCode.Created, revCust3.StatusCode);
+
+        var revDriver = await driverClient.PostAsJsonAsync("/api/avaliacoes/entregadores", new
+        {
+            restaurantId = restId,
+            rating = 5,
+            comment = "Coleta interna rapida para entregadores."
+        });
+        Assert.Equal(HttpStatusCode.Created, revDriver.StatusCode);
+
+        // Avaliacoes do restaurante devem retornar apenas Customer (2 itens), nunca Courier
+        var restReviews = await anonClient.GetFromJsonAsync<JsonElement>($"/api/restaurantes/{restId}/avaliacoes");
+        var restReviewList = restReviews.EnumerateArray().ToList();
+        Assert.Equal(2, restReviewList.Count);
+        Assert.All(restReviewList, r => Assert.Equal("Customer", r.GetProperty("targetType").GetString()));
+
+        // Destaques da Home devem retornar no maximo 3 avaliacoes Customer ordenadas pela maior nota primeiro
+        var featuredReviews = await anonClient.GetFromJsonAsync<JsonElement>("/api/avaliacoes/destaques?limit=3");
+        var featuredList = featuredReviews.EnumerateArray().ToList();
+        Assert.True(featuredList.Count is >= 1 and <= 3);
+        Assert.All(featuredList, r => Assert.Equal("Customer", r.GetProperty("targetType").GetString()));
+        var ratings = featuredList.Select(r => r.GetProperty("rating").GetInt32()).ToList();
+        Assert.Equal(ratings.OrderByDescending(x => x).ToList(), ratings);
+    }
+
+    [Fact]
+    public async Task RastreamentoEntrega_DeveRetornarNomeDoEntregadorENaoGuid()
+    {
+        var driverClient = _factory.CreateClient();
+        var customerClient = _factory.CreateClient();
+
+        const string password = "SenhaForte123";
+        var driverEmail = $"driver_name_{Guid.NewGuid()}@test.com";
+        var customerEmail = $"cust_track_{Guid.NewGuid()}@test.com";
+
+        await driverClient.PostAsJsonAsync("/api/v1/auth/registro", new RegisterRequest
+        {
+            Name = "Carlos Entregador",
+            Email = driverEmail,
+            Password = password,
+            Role = "driver"
+        });
+        var driverLogin = await driverClient.PostAsJsonAsync("/api/v1/auth/login", new LoginRequest
+        {
+            Email = driverEmail,
+            Password = password
+        });
+        driverLogin.EnsureSuccessStatusCode();
+        var driverJson = await driverLogin.Content.ReadFromJsonAsync<JsonElement>();
+        var driverId = driverJson.GetProperty("user").GetProperty("id").GetGuid();
+        var driverToken = driverJson.GetProperty("accessToken").GetString()!;
+        driverClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", driverToken);
+
+        await customerClient.PostAsJsonAsync("/api/v1/auth/registro", new RegisterRequest
+        {
+            Name = "Cliente Rastreamento",
+            Email = customerEmail,
+            Password = password,
+            Role = "customer"
+        });
+        var customerLogin = await customerClient.PostAsJsonAsync("/api/v1/auth/login", new LoginRequest
+        {
+            Email = customerEmail,
+            Password = password
+        });
+        customerLogin.EnsureSuccessStatusCode();
+        var customerJson = await customerLogin.Content.ReadFromJsonAsync<JsonElement>();
+        var customerToken = customerJson.GetProperty("accessToken").GetString()!;
+        customerClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", customerToken);
+
+        // Atualiza localizacao antes de ter registro na tabela Couriers (exercita EnsureCourierEntityAsync)
+        var locRes = await driverClient.PatchAsJsonAsync("/api/entregadores/me/localizacao", new
+        {
+            latitude = -26.9194,
+            longitude = -49.0661
+        });
+        Assert.Equal(HttpStatusCode.OK, locRes.StatusCode);
+
+        Guid restaurantId;
+        Guid productId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var courier = await context.Couriers.FirstOrDefaultAsync(c => c.UserId == driverId);
+            Assert.NotNull(courier);
+            Assert.Equal("Carlos Entregador", courier!.Name);
+
+            var owner = new User("Dono Rastreamento", $"owner_track_{Guid.NewGuid()}@test.com", null, "hash");
+            context.Users.Add(owner);
+
+            var restaurant = new Restaurant("Marmitaria Rastreamento", "Caseira", "44444444000144", owner.Id)
+            {
+                AddressCity = "Blumenau",
+                AddressState = "SC",
+                Latitude = -26.9194,
+                Longitude = -49.0661,
+                DeliveryRadiusKm = 12
+            };
+            restaurant.Approve();
+            context.Restaurants.Add(restaurant);
+
+            var category = new ProductCategory(restaurant.Id, "Executivas", 1);
+            context.ProductCategories.Add(category);
+
+            var product = new Product(restaurant.Id, category.Id, "Prato Executivo", "Com salada", 29.9m, null);
+            context.Products.Add(product);
+            await context.SaveChangesAsync();
+
+            restaurantId = restaurant.Id;
+            productId = product.Id;
+        }
+
+        var addrRes = await customerClient.PostAsJsonAsync("/api/usuarios/me/enderecos", new
+        {
+            street = "Rua 7 de Setembro",
+            number = "100",
+            neighborhood = "Centro",
+            city = "Blumenau",
+            state = "SC",
+            zipCode = "89010-000",
+            isMain = true
+        });
+        Assert.Equal(HttpStatusCode.Created, addrRes.StatusCode);
+
+        using var orderMsg = new HttpRequestMessage(HttpMethod.Post, "/api/v1/pedidos")
+        {
+            Content = JsonContent.Create(new CreateOrderRequest
+            {
+                RestaurantId = restaurantId,
+                Items = new List<OrderItemRequest>
+                {
+                    new() { ProductId = productId, Quantity = 1 }
+                }
+            })
+        };
+        orderMsg.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+        var orderRes = await customerClient.SendAsync(orderMsg);
+        Assert.Equal(HttpStatusCode.Created, orderRes.StatusCode);
+        var orderId = (await orderRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("orderId").GetGuid();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            context.Deliveries.Add(new Delivery
+            {
+                OrderId = orderId,
+                CourierId = driverId,
+                Status = "DriverAssigned"
+            });
+            await context.SaveChangesAsync();
+        }
+
+        var trackRes = await customerClient.GetAsync($"/api/entregas/{orderId}/rastreamento");
+        trackRes.EnsureSuccessStatusCode();
+        var trackJson = await trackRes.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Carlos Entregador", trackJson.GetProperty("courierName").GetString());
+
+        // Simula registro legado gravado com GUID em couriers.name e garante fallback para nome real do usuario
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var courier = await context.Couriers.FirstAsync(c => c.UserId == driverId);
+            courier.Name = driverId.ToString();
+            await context.SaveChangesAsync();
+        }
+
+        var legacyTrackRes = await customerClient.GetAsync($"/api/entregas/{orderId}/rastreamento");
+        legacyTrackRes.EnsureSuccessStatusCode();
+        var legacyTrackJson = await legacyTrackRes.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Carlos Entregador", legacyTrackJson.GetProperty("courierName").GetString());
+    }
 }

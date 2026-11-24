@@ -73,7 +73,7 @@ public static class DatabaseInitializer
             ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
             ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS opening_hours VARCHAR(120) NOT NULL DEFAULT 'Seg a Sáb • 10:30 às 15:30';
             ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS delivery_fee NUMERIC(10,2) NOT NULL DEFAULT 0.00;
-            ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS delivery_radius_km DOUBLE PRECISION NOT NULL DEFAULT 12.0;
+            ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS delivery_radius_km DOUBLE PRECISION NOT NULL DEFAULT 8.0;
             ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS bank_name VARCHAR(80);
             ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS bank_agency VARCHAR(30);
             ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS bank_account VARCHAR(40);
@@ -404,6 +404,36 @@ public static class DatabaseInitializer
                 latitude = -26.9242,
                 longitude = -49.0932
             WHERE address_street = '' OR address_city = 'São Paulo';
+
+            UPDATE restaurants
+            SET delivery_radius_km = 6.0
+            WHERE id = 'aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa' AND delivery_radius_km = 12.0;
+
+            UPDATE restaurants
+            SET delivery_radius_km = 8.0
+            WHERE id = 'bbbbbbbb-2222-2222-2222-bbbbbbbbbbbb' AND delivery_radius_km = 12.0;
+
+            UPDATE restaurants
+            SET delivery_radius_km = 10.0
+            WHERE id = 'cccccccc-3333-3333-3333-cccccccccccc' AND delivery_radius_km = 12.0;
+
+            UPDATE restaurants
+            SET latitude = NULL,
+                longitude = NULL
+            WHERE LOWER(TRIM(address_city)) <> 'blumenau'
+              AND latitude IS NOT NULL
+              AND longitude IS NOT NULL
+              AND ABS(latitude - (-26.9194)) < 0.001
+              AND ABS(longitude - (-49.0661)) < 0.001;
+
+            UPDATE addresses
+            SET latitude = NULL,
+                longitude = NULL
+            WHERE LOWER(TRIM(city)) <> 'blumenau'
+              AND latitude IS NOT NULL
+              AND longitude IS NOT NULL
+              AND ABS(latitude - (-26.9194)) < 0.001
+              AND ABS(longitude - (-49.0661)) < 0.001;
 
             INSERT INTO addresses (id, user_id, street, number, complement, neighborhood, city, state, zip_code, is_main, latitude, longitude, created_at, updated_at)
             SELECT '44444444-aaaa-4444-4444-444444444444', '44444444-4444-4444-4444-444444444444', 'Rua República Argentina', '1450', 'Apto 82', 'Ponta Aguda', 'Blumenau', 'SC', '89050-100', TRUE, -26.9147, -49.0558, NOW(), NOW()

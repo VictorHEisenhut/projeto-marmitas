@@ -39,6 +39,7 @@ const restNumber = ref('')
 const restNeighborhood = ref('')
 const restCity = ref('Blumenau')
 const restState = ref('SC')
+const restDeliveryRadiusKm = ref(8)
 const savingRest = ref(false)
 
 const catName = ref('')
@@ -95,6 +96,7 @@ async function handleCreateRestaurant() {
       addressNeighborhood: restNeighborhood.value.trim() || 'Centro',
       addressCity: restCity.value.trim() || 'Blumenau',
       addressState: restState.value.trim().toUpperCase() || 'SC',
+      deliveryRadiusKm: Math.max(1, Number(restDeliveryRadiusKm.value) || 8),
     })
     restName.value = ''
     restDocument.value = ''
@@ -347,6 +349,14 @@ async function handleConfirmDeleteCat() {
           <AppInput v-model="restCity" label="Cidade" />
           <AppInput v-model="restState" label="UF" maxlength="2" input-class="uppercase" />
         </div>
+        <AppInput
+          v-model.number="restDeliveryRadiusKm"
+          label="Raio de entrega (km)"
+          type="number"
+          step="0.5"
+          min="1"
+          max="50"
+        />
       </form>
 
       <template #footer>

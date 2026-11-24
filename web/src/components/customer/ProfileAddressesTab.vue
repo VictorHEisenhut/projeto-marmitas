@@ -38,6 +38,8 @@ const complement = ref('')
 const neighborhood = ref('')
 const city = ref('Blumenau')
 const state = ref('SC')
+const latitude = ref<number | null>(null)
+const longitude = ref<number | null>(null)
 const isMain = ref(false)
 
 function openNewModal() {
@@ -49,6 +51,8 @@ function openNewModal() {
   neighborhood.value = ''
   city.value = 'Blumenau'
   state.value = 'SC'
+  latitude.value = null
+  longitude.value = null
   isMain.value = false
   modalOpen.value = true
 }
@@ -62,6 +66,8 @@ function openEditModal(addr: Address) {
   neighborhood.value = addr.neighborhood
   city.value = addr.city
   state.value = addr.state
+  latitude.value = addr.latitude ?? null
+  longitude.value = addr.longitude ?? null
   isMain.value = addr.isMain
   modalOpen.value = true
 }
@@ -76,11 +82,15 @@ async function handleLookupCep() {
       neighborhood: string
       city: string
       state: string
+      latitude?: number
+      longitude?: number
     }>(`/geolocalizacao/cep/${clean}`)
     if (data.street) street.value = data.street
     if (data.neighborhood) neighborhood.value = data.neighborhood
     if (data.city) city.value = data.city
     if (data.state) state.value = data.state
+    latitude.value = typeof data.latitude === 'number' ? data.latitude : null
+    longitude.value = typeof data.longitude === 'number' ? data.longitude : null
     toast.info('Endereço preenchido automaticamente pelo CEP.')
   } catch {
     // Allow manual completion
@@ -105,6 +115,8 @@ async function handleSaveAddress() {
       city: city.value.trim(),
       state: state.value.trim().toUpperCase() || 'SC',
       zipCode: zipCode.value.trim(),
+      latitude: latitude.value,
+      longitude: longitude.value,
       isMain: isMain.value,
     }
 

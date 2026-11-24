@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Marmitas.Application.Common.Interfaces;
 using Marmitas.Application.Platform.Dtos;
 using Marmitas.Domain.Entities;
+using Marmitas.Domain.ValueObjects;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -42,18 +43,32 @@ public class AddressesController : ControllerBase
                 addr.IsMain = false;
         }
 
+        var street = request.Street.Trim();
+        var neighborhood = request.Neighborhood.Trim();
+        var city = request.City.Trim();
+        var state = request.State.Trim().ToUpperInvariant();
+        var zipCode = request.ZipCode.Trim();
+        var resolvedPoint = GeoCalculator.ResolveAddressCoordinates(
+            request.Latitude,
+            request.Longitude,
+            street,
+            neighborhood,
+            city,
+            state,
+            zipCode);
+
         var address = new Address
         {
             UserId = userId,
-            Street = request.Street.Trim(),
+            Street = street,
             Number = request.Number.Trim(),
             Complement = request.Complement,
-            Neighborhood = request.Neighborhood.Trim(),
-            City = request.City.Trim(),
-            State = request.State.Trim(),
-            ZipCode = request.ZipCode.Trim(),
-            Latitude = request.Latitude,
-            Longitude = request.Longitude,
+            Neighborhood = neighborhood,
+            City = city,
+            State = state,
+            ZipCode = zipCode,
+            Latitude = resolvedPoint.Latitude,
+            Longitude = resolvedPoint.Longitude,
             IsMain = request.IsMain || existing.Count == 0
         };
 
@@ -71,15 +86,31 @@ public class AddressesController : ControllerBase
         if (address == null)
             throw new Exception("Endereço não encontrado.");
 
+        var addressChanged =
+            !string.Equals(address.Street, request.Street.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(address.Neighborhood, request.Neighborhood.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(address.City, request.City.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(address.State, request.State.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(address.ZipCode, request.ZipCode.Trim(), StringComparison.OrdinalIgnoreCase);
+
         address.Street = request.Street.Trim();
         address.Number = request.Number.Trim();
         address.Complement = request.Complement;
         address.Neighborhood = request.Neighborhood.Trim();
         address.City = request.City.Trim();
-        address.State = request.State.Trim();
+        address.State = request.State.Trim().ToUpperInvariant();
         address.ZipCode = request.ZipCode.Trim();
-        if (request.Latitude.HasValue) address.Latitude = request.Latitude;
-        if (request.Longitude.HasValue) address.Longitude = request.Longitude;
+
+        var resolvedPoint = GeoCalculator.ResolveAddressCoordinates(
+            addressChanged ? request.Latitude : (request.Latitude ?? address.Latitude),
+            addressChanged ? request.Longitude : (request.Longitude ?? address.Longitude),
+            address.Street,
+            address.Neighborhood,
+            address.City,
+            address.State,
+            address.ZipCode);
+        address.Latitude = resolvedPoint.Latitude;
+        address.Longitude = resolvedPoint.Longitude;
 
         await _profiles.SaveChangesAsync();
         return Ok(address);

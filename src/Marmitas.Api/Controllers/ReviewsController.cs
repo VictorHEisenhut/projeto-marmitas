@@ -36,6 +36,58 @@ public class ReviewsController : ControllerBase
         return Ok(list);
     }
 
+    [HttpGet("api/avaliacoes/destaques")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetFeaturedReviews([FromQuery] int limit = 3)
+    {
+        limit = Math.Clamp(limit, 1, 12);
+
+        var list = await _payments.GetReviewsByTargetTypeAsync("Customer");
+        var reviewCountByRestaurant = list
+            .Where(r => r.RestaurantId != Guid.Empty)
+            .GroupBy(r => r.RestaurantId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var withComments = list.Where(r => !string.IsNullOrWhiteSpace(r.Comment)).ToList();
+        var candidates = withComments.Count > 0 ? withComments : list;
+
+        var ordered = candidates
+            .OrderByDescending(r => r.Rating)
+            .ThenByDescending(r =>
+                r.RestaurantId != Guid.Empty && reviewCountByRestaurant.TryGetValue(r.RestaurantId, out var count)
+                    ? count
+                    : 0)
+            .ThenByDescending(r => r.CreatedAt)
+            .ToList();
+
+        var selected = new List<Review>();
+        var seenRestaurants = new HashSet<Guid>();
+
+        foreach (var rev in ordered)
+        {
+            if (selected.Count >= limit) break;
+            if (rev.RestaurantId == Guid.Empty || seenRestaurants.Add(rev.RestaurantId))
+            {
+                selected.Add(rev);
+            }
+        }
+
+        if (selected.Count < limit)
+        {
+            var selectedIds = selected.Select(r => r.Id).ToHashSet();
+            foreach (var rev in ordered)
+            {
+                if (selected.Count >= limit) break;
+                if (selectedIds.Add(rev.Id))
+                {
+                    selected.Add(rev);
+                }
+            }
+        }
+
+        return Ok(selected);
+    }
+
     [HttpPost("api/avaliacoes/clientes")]
     [Authorize]
     public async Task<IActionResult> AddCustomerReview([FromBody] CreateTypedReviewRequest request)
@@ -167,9 +219,16 @@ public class ReviewsController : ControllerBase
 
     [HttpGet("api/restaurantes/{id}/avaliacoes")]
     [AllowAnonymous]
-    public async Task<IActionResult> GetRestaurantReviews(Guid id)
+    public async Task<IActionResult> GetRestaurantReviews(Guid id, [FromQuery] string? targetType = "Customer")
     {
         var list = await _payments.GetReviewsByRestaurantIdAsync(id);
+        if (!string.Equals(targetType, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            var normalizedTarget = string.IsNullOrWhiteSpace(targetType) ? "Customer" : targetType.Trim();
+            list = list
+                .Where(r => string.Equals(r.TargetType, normalizedTarget, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
         return Ok(list);
     }
 

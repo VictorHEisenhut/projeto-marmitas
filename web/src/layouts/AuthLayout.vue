@@ -50,8 +50,8 @@ const theme = useThemeStore()
         </h2>
 
         <p class="text-sm leading-relaxed text-white/85">
-          Peça marmitas caseiras avulsas ou assine um plano semanal com economia inteligente,
-          rastreamento GPS ao vivo e recomendação nutricional por IA.
+          Peça marmitas caseiras avulsas ou assine um plano semanal com economia inteligente
+          e rastreamento GPS ao vivo.
         </p>
 
         <div class="grid grid-cols-2 gap-3 pt-2">

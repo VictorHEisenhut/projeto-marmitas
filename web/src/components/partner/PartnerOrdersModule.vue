@@ -49,7 +49,7 @@ const complaintReplyText = ref('')
 const sendingReply = ref(false)
 
 const manualOpen = ref(false)
-const manualOrderId = ref('')
+const manualOrderCode = ref('')
 const manualNextStatus = ref('Preparing')
 const updatingManual = ref(false)
 
@@ -156,17 +156,39 @@ async function handleReplyComplaint(orderId: string) {
 }
 
 async function handleManualStatusUpdate() {
-  if (!manualOrderId.value.trim()) {
-    toast.warning('Informe o UUID do pedido.')
+  const normalized = manualOrderCode.value.replace(/^#+/, '').trim().toLowerCase()
+  if (!normalized) {
+    toast.warning('Informe o código do pedido (ex: #ab6cd09d).')
     return
   }
+
+  let resolvedOrderId: string | null = null
+  const exactMatch = props.orders.find((o) => o.id.toLowerCase() === normalized)
+  if (exactMatch) {
+    resolvedOrderId = exactMatch.id
+  } else {
+    const matches = props.orders.filter((o) => o.id.toLowerCase().startsWith(normalized))
+    const uniqueMatch = matches.length === 1 ? matches[0] : undefined
+    if (uniqueMatch) {
+      resolvedOrderId = uniqueMatch.id
+    } else if (matches.length > 1) {
+      toast.warning('Mais de um pedido corresponde a esse código. Informe os 8 caracteres do código do pedido.')
+      return
+    } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalized)) {
+      resolvedOrderId = normalized
+    } else {
+      toast.error(`Pedido #${normalized} não encontrado nesta loja.`)
+      return
+    }
+  }
+
   updatingManual.value = true
   try {
-    await api.post(`/pedidos/${manualOrderId.value.trim()}/historico-status`, {
+    await api.post(`/pedidos/${resolvedOrderId}/historico-status`, {
       status: manualNextStatus.value,
     })
-    manualOrderId.value = ''
-    toast.success('Status atualizado manualmente.')
+    manualOrderCode.value = ''
+    toast.success(`Status do pedido #${resolvedOrderId.slice(0, 8)} atualizado manualmente.`)
     emit('refresh')
   } catch (err) {
     toast.error(getErrorMessage(err, 'Não foi possível atualizar o status do pedido.'))
@@ -424,14 +446,14 @@ function triggerBrowserPrint() {
       </div>
     </div>
 
-    <!-- Collapsible Manual UUID Fallback -->
+    <!-- Collapsible Manual Order Code Fallback -->
     <div class="rounded-2xl border border-line bg-surface">
       <button
         type="button"
         class="flex w-full items-center justify-between px-4 py-3 text-xs font-bold text-ink-secondary hover:text-ink"
         @click="manualOpen = !manualOpen"
       >
-        <span>Atualização manual por UUID do pedido (avançado)</span>
+        <span>Atualização manual por código do pedido</span>
         <ChevronDown class="h-4 w-4 transition-transform" :class="{ 'rotate-180': manualOpen }" />
       </button>
 
@@ -441,13 +463,23 @@ function triggerBrowserPrint() {
         @submit.prevent="handleManualStatusUpdate"
       >
         <div class="space-y-1">
-          <label class="block text-xs font-semibold text-ink-secondary">UUID do pedido</label>
+          <label class="block text-xs font-semibold text-ink-secondary">Código do pedido</label>
           <input
-            v-model="manualOrderId"
+            v-model="manualOrderCode"
             type="text"
-            placeholder="00000000-0000-..."
+            placeholder="Ex: #ab6cd09d"
+            list="partner-order-codes"
             class="w-full rounded-xl border border-line-strong bg-surface px-3 py-2 text-xs text-ink"
           />
+          <datalist id="partner-order-codes">
+            <option
+              v-for="order in orders"
+              :key="order.id"
+              :value="`#${order.id.slice(0, 8)}`"
+            >
+              #{{ order.id.slice(0, 8) }} — {{ order.customerName || 'Cliente' }}
+            </option>
+          </datalist>
         </div>
         <div class="space-y-1">
           <label class="block text-xs font-semibold text-ink-secondary">Novo status</label>

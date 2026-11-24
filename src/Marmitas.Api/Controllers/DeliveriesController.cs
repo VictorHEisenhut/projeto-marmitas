@@ -18,6 +18,7 @@ public class DeliveriesController : ControllerBase
     private readonly ICreateOrderService _orders;
     private readonly IRestaurantRepository _restaurants;
     private readonly ICustomerProfileRepository _profiles;
+    private readonly IUserRepository _users;
     private readonly IDeliveryDistributionService _distribution;
     private readonly IFinancialLedgerService _ledger;
 
@@ -26,6 +27,7 @@ public class DeliveriesController : ControllerBase
         ICreateOrderService orders,
         IRestaurantRepository restaurants,
         ICustomerProfileRepository profiles,
+        IUserRepository users,
         IDeliveryDistributionService distribution,
         IFinancialLedgerService ledger)
     {
@@ -33,6 +35,7 @@ public class DeliveriesController : ControllerBase
         _orders = orders;
         _restaurants = restaurants;
         _profiles = profiles;
+        _users = users;
         _distribution = distribution;
         _ledger = ledger;
     }
@@ -287,6 +290,13 @@ public class DeliveriesController : ControllerBase
             throw new Exception("Seu cadastro de entregador não está aprovado para aceitar entregas.");
         }
 
+        if (courier != null && (IsGuidOrEmpty(courier.Name) || string.Equals(courier.Name.Trim(), "Entregador", StringComparison.OrdinalIgnoreCase)))
+        {
+            var resolved = await ResolveCourierNameAsync(courier, userId);
+            if (!string.IsNullOrWhiteSpace(resolved))
+                courier.Name = resolved;
+        }
+
         var delivery = await _deliveries.GetDeliveryByIdOrOrderAsync(id);
         if (delivery == null)
         {
@@ -406,15 +416,17 @@ public class DeliveriesController : ControllerBase
         });
 
         GeoPoint? driverPoint = null;
+        string? resolvedCourierName = null;
         if (delivery?.CourierId != null)
         {
             courier = await _deliveries.GetCourierByUserIdAsync(delivery.CourierId.Value)
                 ?? await _deliveries.GetCourierByIdAsync(delivery.CourierId.Value);
+            resolvedCourierName = await ResolveCourierNameAsync(courier, delivery.CourierId);
             history = await _deliveries.GetDriverLocationsAsync(courier?.Id ?? delivery.CourierId.Value, 10);
 
             if (courier?.Latitude.HasValue == true && courier.Longitude.HasValue)
             {
-                driverPoint = new GeoPoint(courier.Latitude.Value, courier.Longitude.Value, courier.Name);
+                driverPoint = new GeoPoint(courier.Latitude.Value, courier.Longitude.Value, resolvedCourierName ?? "Entregador");
             }
 
             var courierDeliveries = await _deliveries.GetDeliveriesByCourierAsync(delivery.CourierId.Value);
@@ -495,7 +507,7 @@ public class DeliveriesController : ControllerBase
             deliveryId = delivery?.Id ?? id,
             orderId,
             status = currentStatus,
-            courierName = courier?.Name,
+            courierName = resolvedCourierName,
             latitude = courier?.Latitude ?? restaurantPoint.Latitude,
             longitude = courier?.Longitude ?? restaurantPoint.Longitude,
             estimatedMinutes = eta.EstimatedMinutes,
@@ -539,5 +551,31 @@ public class DeliveriesController : ControllerBase
             isAvailable = request.IsAvailable,
             updatedAt = DateTime.UtcNow
         });
+    }
+
+    private static bool IsGuidOrEmpty(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) || Guid.TryParse(value.Trim(), out _);
+    }
+
+    private async Task<string?> ResolveCourierNameAsync(Courier? courier, Guid? deliveryCourierId)
+    {
+        if (courier != null && !IsGuidOrEmpty(courier.Name))
+            return courier.Name.Trim();
+
+        var candidateIds = new List<Guid>();
+        if (courier?.UserId is Guid courierUserId && courierUserId != Guid.Empty)
+            candidateIds.Add(courierUserId);
+        if (deliveryCourierId is Guid dId && dId != Guid.Empty && !candidateIds.Contains(dId))
+            candidateIds.Add(dId);
+
+        foreach (var candidateId in candidateIds)
+        {
+            var user = await _users.GetByIdAsync(candidateId);
+            if (user != null && !IsGuidOrEmpty(user.Name))
+                return user.Name.Trim();
+        }
+
+        return null;
     }
 }

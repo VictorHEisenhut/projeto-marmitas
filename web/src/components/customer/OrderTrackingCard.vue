@@ -86,6 +86,13 @@ const pinDigits = computed(() =>
   (props.order.confirmationPin || '').slice(0, 4).split(''),
 )
 
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const courierDisplayName = computed(() => {
+  const name = props.trackingInfo?.courierName?.trim()
+  if (!name || uuidPattern.test(name)) return null
+  return name
+})
+
 function getOpenStreetMapEmbedUrl(lat: number, lon: number): string {
   const delta = 0.006
   const bbox = `${lon - delta},${lat - delta},${lon + delta},${lat + delta}`
@@ -384,11 +391,11 @@ async function handleSubmitComplaint() {
         </ol>
       </div>
 
-      <div v-if="trackingInfo && (trackingInfo.latitude || trackingInfo.courierName)" class="space-y-3">
+      <div v-if="trackingInfo && (trackingInfo.latitude || courierDisplayName)" class="space-y-3">
         <div class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-xs">
           <div class="flex flex-wrap items-center gap-3">
-            <span v-if="trackingInfo.courierName" class="text-ink">
-              <strong>Entregador:</strong> {{ trackingInfo.courierName }}
+            <span v-if="courierDisplayName" class="text-ink">
+              <strong>Entregador:</strong> {{ courierDisplayName }}
             </span>
             <span v-if="trackingInfo.latitude && trackingInfo.longitude" class="inline-flex items-center gap-1 text-ink-muted tabular-nums">
               <Navigation class="h-3.5 w-3.5 text-brand-600" />

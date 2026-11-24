@@ -95,7 +95,7 @@ describe('componentes UI base', () => {
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual(['4829'])
   })
 
-  it('aceita colagem de 6 dígitos no OtpInput para MFA e redefinição de senha', async () => {
+  it('aceita colagem de 6 dígitos no OtpInput para redefinição de senha', async () => {
     const wrapper = mount(OtpInput, {
       props: { modelValue: '', length: 6 },
     })

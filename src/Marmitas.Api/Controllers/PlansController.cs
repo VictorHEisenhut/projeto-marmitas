@@ -25,26 +25,87 @@ public class PlansController : ControllerBase
     public async Task<IActionResult> GetAll([FromQuery] Guid? restaurantId = null)
     {
         var plans = await _subscriptions.GetActivePlansAsync(restaurantId);
-        if (plans.Any(p => string.IsNullOrWhiteSpace(p.RestaurantName) && p.RestaurantId != Guid.Empty))
+        await PopulateRestaurantNamesAsync(plans);
+        return Ok(plans);
+    }
+
+    [HttpGet("mais-acessados")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetMostAccessed([FromQuery] int limit = 3)
+    {
+        limit = Math.Clamp(limit, 1, 12);
+
+        var plans = await _subscriptions.GetActivePlansAsync();
+        await PopulateRestaurantNamesAsync(plans);
+
+        var subscriptions = await _subscriptions.GetAllSubscriptionsAsync();
+        var countsByPlan = subscriptions
+            .GroupBy(s => s.PlanId)
+            .ToDictionary(
+                g => g.Key,
+                g => (Active: g.Count(s => s.Status == "Active"), Total: g.Count()));
+
+        var ordered = plans
+            .OrderByDescending(p => countsByPlan.TryGetValue(p.Id, out var c) ? c.Active : 0)
+            .ThenByDescending(p => countsByPlan.TryGetValue(p.Id, out var c) ? c.Total : 0)
+            .ThenBy(p => p.MonthlyPrice)
+            .ThenBy(p => p.CreatedAt)
+            .ToList();
+
+        var selected = new List<Plan>();
+        var seenRestaurants = new HashSet<Guid>();
+
+        foreach (var plan in ordered)
         {
-            var restaurants = await _restaurants.GetAllAsync();
-            var namesById = restaurants.ToDictionary(r => r.Id, r => r.Name);
-            foreach (var p in plans)
+            if (selected.Count >= limit) break;
+            if (plan.RestaurantId == Guid.Empty || seenRestaurants.Add(plan.RestaurantId))
             {
-                if (string.IsNullOrWhiteSpace(p.RestaurantName) && namesById.TryGetValue(p.RestaurantId, out var name))
+                selected.Add(plan);
+            }
+        }
+
+        if (selected.Count < limit)
+        {
+            var selectedIds = selected.Select(p => p.Id).ToHashSet();
+            foreach (var plan in ordered)
+            {
+                if (selected.Count >= limit) break;
+                if (selectedIds.Add(plan.Id))
                 {
-                    p.RestaurantName = name;
+                    selected.Add(plan);
                 }
             }
         }
-        return Ok(plans);
+
+        var result = selected.Select(p => new
+        {
+            p.Id,
+            p.RestaurantId,
+            p.RestaurantName,
+            p.Name,
+            p.Description,
+            p.MealsPerWeek,
+            p.MealsPerMonth,
+            p.MonthlyPrice,
+            p.Frequency,
+            p.AllowedDays,
+            p.DeliveryWindow,
+            p.DeliveryFee,
+            p.CancellationPolicy,
+            p.IsActive,
+            p.CreatedAt,
+            p.UpdatedAt,
+            subscribersCount = countsByPlan.TryGetValue(p.Id, out var c) ? c.Total : 0
+        });
+
+        return Ok(result);
     }
 
     [HttpGet("/api/restaurantes/{restaurantId:guid}/planos")]
     [AllowAnonymous]
     public Task<IActionResult> GetByRestaurant(Guid restaurantId) => GetAll(restaurantId);
 
-    [HttpGet("{id}")]
+    [HttpGet("{id:guid}")]
     [AllowAnonymous]
     public async Task<IActionResult> GetById(Guid id)
     {
@@ -177,6 +238,22 @@ public class PlansController : ControllerBase
         plan.IsActive = false;
         await _subscriptions.SaveChangesAsync();
         return NoContent();
+    }
+
+    private async Task PopulateRestaurantNamesAsync(List<Plan> plans)
+    {
+        if (!plans.Any(p => string.IsNullOrWhiteSpace(p.RestaurantName) && p.RestaurantId != Guid.Empty))
+            return;
+
+        var restaurants = await _restaurants.GetAllAsync();
+        var namesById = restaurants.ToDictionary(r => r.Id, r => r.Name);
+        foreach (var p in plans)
+        {
+            if (string.IsNullOrWhiteSpace(p.RestaurantName) && namesById.TryGetValue(p.RestaurantId, out var name))
+            {
+                p.RestaurantName = name;
+            }
+        }
     }
 
     private Guid GetUserId()

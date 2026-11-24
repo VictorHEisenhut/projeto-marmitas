@@ -45,12 +45,6 @@ public class LoginService : ILoginService
         if (user.Status == UserStatus.Blocked)
             throw new Exception("Usuário bloqueado. Entre em contato com o suporte.");
 
-        if (user.MfaEnabled && !string.IsNullOrWhiteSpace(user.MfaSecret))
-        {
-            if (string.IsNullOrWhiteSpace(request.MfaCode) || request.MfaCode.Trim() != user.MfaSecret)
-                throw new Exception("Código de autenticação em duas etapas (MFA) inválido ou ausente.");
-        }
-
         user.ResetFailedLogins();
 
         var (token, expiresAt) = _tokenService.GenerateToken(user);

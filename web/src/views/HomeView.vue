@@ -27,19 +27,23 @@ import AppEmptyState from '@/components/ui/AppEmptyState.vue'
 import StarRating from '@/components/ui/StarRating.vue'
 import { api, formatCurrency, getErrorMessage } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useAddressStore } from '@/stores/address'
 import { useActiveOrderStore } from '@/stores/activeOrder'
 import { useToastStore } from '@/stores/toast'
 import type { Favorite, Plan, Restaurant, ReviewItem } from '@/types'
 
 const auth = useAuthStore()
+const addressStore = useAddressStore()
 const activeOrderStore = useActiveOrderStore()
 const toast = useToastStore()
 const route = useRoute()
 const router = useRouter()
 
 const restaurants = ref<Restaurant[]>([])
+const showAllRegions = ref(false)
 const plans = ref<Plan[]>([])
 const customerReviews = ref<ReviewItem[]>([])
+const featuredReviews = ref<ReviewItem[]>([])
 const favorites = ref<Favorite[]>([])
 const searchQuery = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const activeFilter = ref<'all' | 'top_rated' | 'low_fee' | 'plan_ready'>('all')
@@ -172,6 +176,11 @@ const platformAvgRating = computed(() => {
   return sum / customerReviews.value.length
 })
 
+const lowestPlanPricePerMeal = computed<number | null>(() => {
+  if (plans.value.length === 0) return null
+  return Math.min(...plans.value.map((p) => getPricePerMeal(p)))
+})
+
 function getMealsPerMonth(plan: Plan): number {
   return plan.mealsPerMonth && plan.mealsPerMonth > 0
     ? plan.mealsPerMonth
@@ -192,15 +201,50 @@ function getInitials(name?: string): string {
     .join('')
 }
 
+function isValidImageUrl(url?: string | null): boolean {
+  if (!url) return false
+  const trimmed = url.trim()
+  return /^https?:\/\//i.test(trimmed) || trimmed.startsWith('/')
+}
+
+function getRestaurantQueryParams(): Record<string, string | number> | undefined {
+  if (!auth.isAuthenticated || auth.isDriverOnly || showAllRegions.value) return undefined
+  const addr = addressStore.selectedAddress
+  if (!addr) return undefined
+
+  const params: Record<string, string | number> = {}
+  if (addr.id) params.addressId = addr.id
+  if (addr.city) params.city = addr.city
+  if (addr.state) params.state = addr.state
+  if (typeof addr.latitude === 'number') params.lat = addr.latitude
+  if (typeof addr.longitude === 'number') params.lon = addr.longitude
+  return params
+}
+
+async function fetchRestaurants() {
+  try {
+    const { data } = await api.get<Restaurant[]>('/restaurantes', {
+      params: getRestaurantQueryParams(),
+    })
+    restaurants.value = data
+    if (data[0] && !data.some((r) => r.id === mapSelectedRestaurantId.value)) {
+      mapSelectedRestaurantId.value = data[0].id
+    }
+  } catch (err) {
+    toast.error(getErrorMessage(err, 'Não foi possível atualizar os restaurantes para este endereço.'))
+  }
+}
+
 async function fetchData() {
   loading.value = true
   error.value = ''
 
   try {
     const requests: Promise<unknown>[] = [
-      api.get<Restaurant[]>('/restaurantes'),
-      api.get<Plan[]>('/planos'),
+      api.get<Restaurant[]>('/restaurantes', { params: getRestaurantQueryParams() }),
+      api.get<Plan[]>('/planos/mais-acessados', { params: { limit: 3 } }),
       api.get<ReviewItem[]>('/avaliacoes/clientes'),
+      api.get<ReviewItem[]>('/avaliacoes/destaques', { params: { limit: 3 } }),
     ]
 
     if (auth.isAuthenticated && !auth.isDriverOnly) {
@@ -225,7 +269,12 @@ async function fetchData() {
       customerReviews.value = (results[2].value as { data: ReviewItem[] }).data
     }
     if (results[3]?.status === 'fulfilled') {
-      favorites.value = (results[3].value as { data: Favorite[] }).data
+      featuredReviews.value = (results[3].value as { data: ReviewItem[] }).data
+    } else {
+      featuredReviews.value = customerReviews.value.slice(0, 3)
+    }
+    if (results[4]?.status === 'fulfilled') {
+      favorites.value = (results[4].value as { data: Favorite[] }).data
     }
   } catch (err) {
     error.value = getErrorMessage(err, 'Não foi possível carregar os dados da vitrine.')
@@ -287,8 +336,20 @@ function scrollToPlans() {
   document.getElementById('planos-section')?.scrollIntoView({ behavior: 'smooth' })
 }
 
-onMounted(() => {
-  void fetchData()
+watch(
+  [() => addressStore.selectedAddress?.id, showAllRegions],
+  () => {
+    if (!loading.value) {
+      void fetchRestaurants()
+    }
+  },
+)
+
+onMounted(async () => {
+  if (auth.isAuthenticated && !auth.isDriverOnly) {
+    await addressStore.fetchAddresses()
+  }
+  await fetchData()
 })
 </script>
 
@@ -406,14 +467,14 @@ onMounted(() => {
             <div class="flex items-center justify-between">
               <AppBadge variant="fresh" size="xs">Clube de Marmitas</AppBadge>
               <span class="font-display text-xs font-extrabold text-fresh-700 dark:text-fresh-300 tabular-nums">
-                {{ plans.length }} planos ativos
+                Top {{ plans.length }} em destaque
               </span>
             </div>
             <div class="my-2">
               <p class="font-display text-base font-extrabold text-ink">
                 Marmitas a partir de
-                <span v-if="plans[0]" class="text-fresh-700 dark:text-fresh-400 tabular-nums">
-                  {{ formatCurrency(getPricePerMeal(plans[0])) }}/un.
+                <span v-if="lowestPlanPricePerMeal !== null" class="text-fresh-700 dark:text-fresh-400 tabular-nums">
+                  {{ formatCurrency(lowestPlanPricePerMeal) }}/un.
                 </span>
                 <span v-else class="text-fresh-700 dark:text-fresh-400">R$ 0,00 base</span>
               </p>
@@ -479,6 +540,34 @@ onMounted(() => {
               </button>
             </div>
           </div>
+        </div>
+
+        <!-- Customer Location Scope Context Bar -->
+        <div
+          v-if="auth.isAuthenticated && !auth.isDriverOnly && addressStore.selectedAddress"
+          class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface-subtle px-4 py-2.5 text-xs"
+        >
+          <div class="flex items-center gap-2 text-ink-secondary">
+            <MapPin class="h-4 w-4 shrink-0 text-brand-600" />
+            <span v-if="!showAllRegions">
+              Entregando em
+              <strong class="text-ink">
+                {{ addressStore.selectedAddress.neighborhood || addressStore.selectedAddress.street }},
+                {{ addressStore.selectedAddress.city }}/{{ addressStore.selectedAddress.state }}
+              </strong>
+              · mostrando restaurantes dentro do raio de entrega
+            </span>
+            <span v-else>
+              Exibindo restaurantes de <strong class="text-ink">todas as cidades</strong> (fora do seu raio podem não entregar)
+            </span>
+          </div>
+          <button
+            type="button"
+            class="font-bold text-brand-600 hover:underline dark:text-brand-400"
+            @click="showAllRegions = !showAllRegions"
+          >
+            {{ showAllRegions ? 'Filtrar pelo meu endereço' : 'Ver todas as cidades' }}
+          </button>
         </div>
 
         <!-- Horizontal Filter Chips -->
@@ -601,8 +690,8 @@ onMounted(() => {
             <div>
               <div class="relative aspect-[16/9] w-full overflow-hidden bg-gradient-to-br from-brand-100 via-amber-50 to-surface-muted dark:from-brand-950/60 dark:via-surface-muted dark:to-surface-subtle">
                 <img
-                  v-if="restaurant.imageUrl"
-                  :src="restaurant.imageUrl"
+                  v-if="isValidImageUrl(restaurant.imageUrl)"
+                  :src="restaurant.imageUrl!"
                   :alt="restaurant.name"
                   class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                 />
@@ -656,6 +745,12 @@ onMounted(() => {
                     }}
                   </span>
                   <span
+                    v-if="restaurant.distanceKm != null"
+                    class="rounded-full bg-surface/95 px-2.5 py-1 text-[11px] font-bold text-ink shadow-sm backdrop-blur-md tabular-nums"
+                  >
+                    {{ restaurant.distanceKm.toFixed(1) }} km
+                  </span>
+                  <span
                     v-if="restaurant.deliveryRadiusKm"
                     class="rounded-full bg-surface/90 px-2.5 py-1 text-[11px] font-semibold text-ink-secondary shadow-sm backdrop-blur-md tabular-nums"
                   >
@@ -702,37 +797,59 @@ onMounted(() => {
         <AppEmptyState
           v-else
           :icon="Store"
-          :title="searchQuery ? 'Nenhum restaurante encontrado' : 'Nenhum restaurante disponível'"
+          :title="
+            searchQuery
+              ? 'Nenhum restaurante encontrado'
+              : addressStore.selectedAddress && !showAllRegions
+                ? `Nenhum restaurante entrega em ${addressStore.selectedAddress.city}/${addressStore.selectedAddress.state}`
+                : 'Nenhum restaurante disponível'
+          "
           :description="
             searchQuery
               ? 'Tente buscar por outro bairro, nome ou limpe os filtros aplicados.'
-              : 'Em breve novos restaurantes parceiros estarão disponíveis na sua região.'
+              : addressStore.selectedAddress && !showAllRegions
+                ? 'Os restaurantes cadastrados estão fora do raio de entrega do seu endereço selecionado.'
+                : 'Em breve novos restaurantes parceiros estarão disponíveis na sua região.'
           "
         >
-          <template v-if="searchQuery || activeFilter !== 'all'" #action>
-            <AppButton
-              variant="outline"
-              size="sm"
-              @click="searchQuery = ''; activeFilter = 'all'"
-            >
-              Limpar filtros
-            </AppButton>
+          <template v-if="searchQuery || activeFilter !== 'all' || (addressStore.selectedAddress && !showAllRegions)" #action>
+            <div class="flex flex-wrap items-center justify-center gap-2">
+              <AppButton
+                v-if="searchQuery || activeFilter !== 'all'"
+                variant="outline"
+                size="sm"
+                @click="searchQuery = ''; activeFilter = 'all'"
+              >
+                Limpar filtros
+              </AppButton>
+              <AppButton
+                v-if="addressStore.selectedAddress && !showAllRegions"
+                variant="primary"
+                size="sm"
+                @click="showAllRegions = true"
+              >
+                Ver todas as cidades
+              </AppButton>
+              <RouterLink v-if="addressStore.selectedAddress && !showAllRegions" to="/conta?tab=enderecos">
+                <AppButton variant="outline" size="sm">Alterar endereço</AppButton>
+              </RouterLink>
+            </div>
           </template>
         </AppEmptyState>
       </section>
 
-      <!-- Subscription Plans + Interactive Savings Simulator -->
+      <!-- Featured Subscription Plans + Interactive Savings Simulator -->
       <section v-if="!auth.isDriverOnly" id="planos-section" class="space-y-6 scroll-mt-20">
         <div class="flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
           <div>
             <AppBadge variant="fresh" size="sm" dot class="mb-2">
-              Clube de Marmitas · Assinatura Recorrente
+              Mais Acessados · Clube de Marmitas
             </AppBadge>
             <h2 class="font-display text-xl font-extrabold text-ink sm:text-2xl">
-              Assine e economize toda semana
+              Planos mais acessados
             </h2>
             <p class="mt-1 text-xs text-ink-muted sm:text-sm">
-              Simule quantas marmitas você pede por semana e descubra o plano ideal.
+              Os planos em destaque na plataforma. Abra um restaurante para conferir todos os planos cadastrados da loja.
             </p>
           </div>
           <RouterLink
@@ -814,16 +931,28 @@ onMounted(() => {
             "
           >
             <div>
-              <div class="flex items-center justify-between gap-2">
+              <div class="flex flex-wrap items-center justify-between gap-2">
                 <AppBadge variant="fresh" size="sm">
                   {{ plan.mealsPerWeek }} marmitas / semana
                 </AppBadge>
-                <AppBadge v-if="recommendedPlan?.id === plan.id" variant="brand" size="xs">
+                <AppBadge v-if="(plan.subscribersCount ?? 0) > 0" variant="neutral" size="xs">
+                  {{ plan.subscribersCount }} {{ plan.subscribersCount === 1 ? 'assinante' : 'assinantes' }}
+                </AppBadge>
+                <AppBadge v-else-if="recommendedPlan?.id === plan.id" variant="brand" size="xs">
                   Recomendado p/ você
                 </AppBadge>
               </div>
 
-              <h3 class="mt-4 font-display text-xl font-extrabold text-ink">
+              <RouterLink
+                v-if="plan.restaurantId"
+                :to="`/restaurantes/${plan.restaurantId}#planos`"
+                class="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-brand-600 hover:underline dark:text-brand-400"
+              >
+                <Store class="h-3.5 w-3.5" />
+                <span>{{ plan.restaurantName || 'Restaurante Parceiro' }}</span>
+              </RouterLink>
+
+              <h3 class="mt-2 font-display text-xl font-extrabold text-ink">
                 {{ plan.name }}
               </h3>
               <p class="mt-1.5 text-sm leading-relaxed text-ink-secondary">
@@ -863,7 +992,7 @@ onMounted(() => {
               </ul>
             </div>
 
-            <div class="mt-6 pt-2">
+            <div class="mt-6 pt-2 space-y-2">
               <AppButton
                 :variant="recommendedPlan?.id === plan.id ? 'fresh' : 'secondary'"
                 size="lg"
@@ -873,6 +1002,14 @@ onMounted(() => {
               >
                 Assinar plano
               </AppButton>
+              <RouterLink
+                v-if="plan.restaurantId"
+                :to="`/restaurantes/${plan.restaurantId}#planos`"
+                class="flex items-center justify-center gap-1 py-1 text-xs font-semibold text-ink-secondary transition hover:text-brand-600 dark:hover:text-brand-400"
+              >
+                <span>Ver todos os planos da loja</span>
+                <ArrowRight class="h-3.5 w-3.5" />
+              </RouterLink>
             </div>
           </div>
         </div>
@@ -885,20 +1022,20 @@ onMounted(() => {
         />
       </section>
 
-      <!-- Social Proof Editorial Strip (Reviews) -->
+      <!-- Featured Reviews Strip (Top 3 Most Accessed / Highest Rated) -->
       <section class="space-y-5 pb-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 class="font-display text-xl font-extrabold text-ink sm:text-2xl">
-              O que nossos clientes dizem
+              Avaliações mais acessadas
             </h2>
             <p class="text-xs text-ink-muted sm:text-sm">
-              Nota média da comunidade:
-              <strong class="text-ink tabular-nums">{{ platformAvgRating.toFixed(1) }}/5.0</strong>
-              ({{ customerReviews.length }} avaliações verificadas)
+              Principais avaliações verificadas (média geral
+              <strong class="text-ink tabular-nums">{{ platformAvgRating.toFixed(1) }}/5.0</strong>).
+              Abra um restaurante para ver todas as avaliações.
             </p>
           </div>
-          <AppBadge variant="fresh" size="sm">Mural Público</AppBadge>
+          <AppBadge variant="fresh" size="sm">Em Destaque</AppBadge>
         </div>
 
         <div v-if="loading" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -906,35 +1043,57 @@ onMounted(() => {
         </div>
 
         <div
-          v-else-if="customerReviews.length > 0"
-          class="flex gap-4 overflow-x-auto no-scrollbar pb-2 snap-x"
+          v-else-if="featuredReviews.length > 0"
+          class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
         >
           <AppCard
-            v-for="rev in customerReviews.slice(0, 12)"
+            v-for="rev in featuredReviews.slice(0, 3)"
             :key="rev.id"
             padding="md"
-            class="w-[300px] sm:w-[340px] shrink-0 snap-start"
+            class="flex flex-col justify-between"
           >
-            <div class="flex items-start justify-between gap-3">
-              <div class="flex items-center gap-3 min-w-0">
-                <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-100 font-display text-xs font-extrabold text-brand-800 dark:bg-brand-900/60 dark:text-brand-200">
-                  {{ getInitials(rev.authorName) }}
-                </span>
-                <div class="min-w-0">
-                  <p class="truncate text-sm font-bold text-ink">
-                    {{ rev.authorName || 'Cliente Verificado' }}
-                  </p>
-                  <p class="truncate text-xs font-semibold text-brand-600 dark:text-brand-400">
-                    {{ rev.restaurantName || 'Restaurante Parceiro' }}
-                  </p>
+            <div>
+              <div class="flex items-start justify-between gap-3">
+                <div class="flex items-center gap-3 min-w-0">
+                  <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-100 font-display text-xs font-extrabold text-brand-800 dark:bg-brand-900/60 dark:text-brand-200">
+                    {{ getInitials(rev.authorName) }}
+                  </span>
+                  <div class="min-w-0">
+                    <p class="truncate text-sm font-bold text-ink">
+                      {{ rev.authorName || 'Cliente Verificado' }}
+                    </p>
+                    <RouterLink
+                      v-if="rev.restaurantId && rev.restaurantId !== '00000000-0000-0000-0000-000000000000'"
+                      :to="`/restaurantes/${rev.restaurantId}#avaliacoes`"
+                      class="block truncate text-xs font-semibold text-brand-600 hover:underline dark:text-brand-400"
+                    >
+                      {{ rev.restaurantName || 'Restaurante Parceiro' }}
+                    </RouterLink>
+                    <p v-else class="truncate text-xs font-semibold text-brand-600 dark:text-brand-400">
+                      {{ rev.restaurantName || 'Restaurante Parceiro' }}
+                    </p>
+                  </div>
                 </div>
+                <StarRating :model-value="rev.rating" readonly size="sm" />
               </div>
-              <StarRating :model-value="rev.rating" readonly size="sm" />
+
+              <p class="mt-3 text-sm leading-relaxed text-ink-secondary">
+                “{{ rev.comment }}”
+              </p>
             </div>
 
-            <p class="mt-3 text-sm leading-relaxed text-ink-secondary">
-              “{{ rev.comment }}”
-            </p>
+            <div
+              v-if="rev.restaurantId && rev.restaurantId !== '00000000-0000-0000-0000-000000000000'"
+              class="mt-4 border-t border-line pt-2.5"
+            >
+              <RouterLink
+                :to="`/restaurantes/${rev.restaurantId}#avaliacoes`"
+                class="inline-flex items-center gap-1 text-xs font-bold text-brand-600 hover:underline dark:text-brand-400"
+              >
+                <span>Ver todas as avaliações da loja</span>
+                <ArrowRight class="h-3.5 w-3.5" />
+              </RouterLink>
+            </div>
           </AppCard>
         </div>
 

@@ -183,6 +183,39 @@ public class DomainBusinessRulesTests
     }
 
     [Fact]
+    public void GeoCalculator_EnderecoEmCaieirasSP_NaoDeveCairEmBlumenauEDeveRejeitarCoordenadaObsoleta()
+    {
+        var spPoint = GeoCalculator.ResolveAddressCoordinates(
+            null,
+            null,
+            "Rua Principal",
+            "Alpes de Caieiras",
+            "Caieiras",
+            "SP");
+
+        Assert.InRange(spPoint.Latitude, -23.5, -23.2);
+        Assert.InRange(spPoint.Longitude, -46.9, -46.6);
+        Assert.True(GeoCalculator.CalculateDistanceKm(spPoint.Latitude, spPoint.Longitude, -26.9194, -49.0661) > 400.0);
+
+        // Coordenada antiga salva erroneamente em Blumenau/SC deve ser descartada para Caieiras/SP
+        var correctedPoint = GeoCalculator.ResolveAddressCoordinates(
+            -26.9194,
+            -49.0661,
+            "Rua Principal",
+            "Alpes de Caieiras",
+            "Caieiras",
+            "SP");
+        Assert.InRange(correctedPoint.Latitude, -23.5, -23.2);
+
+        // Texto com "Furb" mas explicitamente em Caieiras/SP não pode resolver para Blumenau
+        var textParsed = GeoCalculator.ResolveAddressCoordinates(
+            null,
+            null,
+            "Rest Furb - Alpes de Caieiras, Caieiras/SP");
+        Assert.InRange(textParsed.Latitude, -23.5, -23.2);
+    }
+
+    [Fact]
     public void GeoCalculator_TempoEstimadoComOutrasParadas_DeveSomarTempoEDistanciaDasParadas()
     {
         var restaurant = new GeoPoint(-26.9194, -49.0661, "Restaurante");

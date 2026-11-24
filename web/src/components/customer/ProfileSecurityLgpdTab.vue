@@ -3,10 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   AlertTriangle,
-  CheckCircle2,
   Download,
   FileCheck2,
-  KeyRound,
   ShieldCheck,
   Trash2,
 } from 'lucide-vue-next'
@@ -18,15 +16,11 @@ import AppInput from '@/components/ui/AppInput.vue'
 import { api, getErrorMessage } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
-import type { MfaEnableResponse, UserConsent } from '@/types'
+import type { UserConsent } from '@/types'
 
 const auth = useAuthStore()
 const toast = useToastStore()
 const router = useRouter()
-
-const mfaEnabled = ref(Boolean(auth.user?.mfaEnabled))
-const mfaBusy = ref(false)
-const generatedMfaCode = ref('')
 
 const consents = ref<UserConsent[]>([])
 const loadingConsents = ref(false)
@@ -42,9 +36,8 @@ const hasTermsConsent = computed(() =>
 )
 
 const securityScore = computed(() => {
-  let score = 40 // Base active authenticated account
-  if (mfaEnabled.value) score += 35
-  if (hasTermsConsent.value || consents.value.length > 0) score += 25
+  let score = 60 // Base active authenticated account
+  if (hasTermsConsent.value || consents.value.length > 0) score += 40
   return Math.min(100, score)
 })
 
@@ -57,36 +50,6 @@ async function loadConsents() {
     consents.value = []
   } finally {
     loadingConsents.value = false
-  }
-}
-
-async function handleEnableMfa() {
-  mfaBusy.value = true
-  try {
-    const { data } = await api.post<MfaEnableResponse>('/auth/mfa/ativar')
-    mfaEnabled.value = true
-    generatedMfaCode.value = data.verificationCode || ''
-    if (auth.user) auth.user.mfaEnabled = true
-    toast.success(data.message || 'MFA ativado com sucesso!')
-  } catch (err) {
-    toast.error(getErrorMessage(err, 'Não foi possível ativar o MFA.'))
-  } finally {
-    mfaBusy.value = false
-  }
-}
-
-async function handleDisableMfa() {
-  mfaBusy.value = true
-  try {
-    const { data } = await api.post<MfaEnableResponse>('/auth/mfa/desativar')
-    mfaEnabled.value = false
-    generatedMfaCode.value = ''
-    if (auth.user) auth.user.mfaEnabled = false
-    toast.info(data.message || 'MFA desativado.')
-  } catch (err) {
-    toast.error(getErrorMessage(err, 'Não foi possível desativar o MFA.'))
-  } finally {
-    mfaBusy.value = false
   }
 }
 
@@ -145,7 +108,6 @@ async function handleDeleteAccount() {
 }
 
 onMounted(() => {
-  mfaEnabled.value = Boolean(auth.user?.mfaEnabled)
   void loadConsents()
 })
 </script>
@@ -165,9 +127,9 @@ onMounted(() => {
           </div>
           <p class="text-xs text-ink-secondary">
             {{
-              securityScore >= 75
-                ? 'Excelente! Sua conta está protegida com verificação adicional e controles LGPD.'
-                : 'Ative a autenticação em duas etapas (MFA) para alcançar proteção máxima.'
+              securityScore >= 80
+                ? 'Excelente! Sua conta está protegida e com controles LGPD atualizados.'
+                : 'Confirme seus consentimentos LGPD abaixo para completar sua proteção.'
             }}
           </p>
         </div>
@@ -180,7 +142,7 @@ onMounted(() => {
           <div class="h-12 w-2 overflow-hidden rounded-full bg-surface-muted flex flex-col justify-end">
             <div
               class="w-full rounded-full transition-all duration-500"
-              :class="securityScore >= 75 ? 'bg-fresh-600' : 'bg-amber-500'"
+              :class="securityScore >= 80 ? 'bg-fresh-600' : 'bg-amber-500'"
               :style="{ height: `${securityScore}%` }"
             />
           </div>
@@ -188,67 +150,9 @@ onMounted(() => {
       </div>
     </AppCard>
 
-    <!-- 2x2 Trust Center Grid -->
+    <!-- Trust Center Grid -->
     <div class="grid gap-5 md:grid-cols-2">
-      <!-- Card 1: MFA -->
-      <AppCard padding="lg" class="flex flex-col justify-between space-y-4">
-        <div class="space-y-3">
-          <div class="flex items-start justify-between gap-2">
-            <div class="flex items-center gap-2.5">
-              <span class="flex h-10 w-10 items-center justify-center rounded-2xl bg-brand-50 text-brand-600 dark:bg-brand-950/60 dark:text-brand-400">
-                <KeyRound class="h-5 w-5" />
-              </span>
-              <div>
-                <h3 class="font-display text-base font-extrabold text-ink">Duas Etapas (MFA)</h3>
-                <AppBadge :variant="mfaEnabled ? 'fresh' : 'warning'" size="xs" dot>
-                  {{ mfaEnabled ? 'Ativo' : 'Recomendado ativar' }}
-                </AppBadge>
-              </div>
-            </div>
-          </div>
-
-          <p class="text-xs leading-relaxed text-ink-secondary">
-            Exige um código de 6 dígitos durante o login para impedir acessos não autorizados.
-          </p>
-
-          <div
-            v-if="generatedMfaCode"
-            class="rounded-2xl border border-fresh-200 bg-fresh-50/80 p-3.5 dark:border-fresh-800/60 dark:bg-fresh-950/35"
-          >
-            <div class="flex items-center gap-1.5 text-[11px] font-bold text-fresh-800 dark:text-fresh-300">
-              <CheckCircle2 class="h-3.5 w-3.5" />
-              <span>Seu código MFA configurado:</span>
-            </div>
-            <p class="mt-1 font-mono text-2xl font-extrabold tracking-[0.3em] text-fresh-900 dark:text-fresh-200">
-              {{ generatedMfaCode }}
-            </p>
-          </div>
-        </div>
-
-        <AppButton
-          v-if="!mfaEnabled"
-          variant="primary"
-          size="sm"
-          block
-          :loading="mfaBusy"
-          @click="handleEnableMfa"
-        >
-          <ShieldCheck class="h-4 w-4" />
-          Ativar MFA agora
-        </AppButton>
-        <AppButton
-          v-else
-          variant="outline"
-          size="sm"
-          block
-          :loading="mfaBusy"
-          @click="handleDisableMfa"
-        >
-          Desativar MFA
-        </AppButton>
-      </AppCard>
-
-      <!-- Card 2: Data Portability -->
+      <!-- Card 1: Data Portability -->
       <AppCard padding="lg" class="flex flex-col justify-between space-y-4">
         <div class="space-y-3">
           <div class="flex items-center gap-2.5">

@@ -399,7 +399,7 @@ onMounted(() => {
             @removed="(id) => (favorites = favorites.filter((f) => f.id !== id))"
           />
 
-          <!-- Section 5: Security (MFA) & LGPD -->
+          <!-- Section 5: Security & LGPD -->
           <ProfileSecurityLgpdTab v-else-if="activeSection === 'seguranca'" />
 
           <!-- Section 6: Public Reviews Wall -->

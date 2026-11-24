@@ -4,6 +4,7 @@ using Marmitas.Application.Orders.Dtos;
 using Marmitas.Application.Restaurants.Queries;
 using Marmitas.Domain.Entities;
 using Marmitas.Domain.Enums;
+using Marmitas.Domain.ValueObjects;
 
 namespace Marmitas.Application.Orders;
 
@@ -130,6 +131,42 @@ public class CreateOrderService : ICreateOrderService
 
             if (resolvedAddress == null)
                 throw new Exception("É obrigatório cadastrar um endereço de entrega antes de fazer um pedido.");
+
+            if (!string.IsNullOrWhiteSpace(restaurant.AddressCity) ||
+                !string.IsNullOrWhiteSpace(restaurant.AddressState) ||
+                (restaurant.Latitude.HasValue && restaurant.Longitude.HasValue))
+            {
+                var restPoint = GeoCalculator.ResolveAddressCoordinates(
+                    restaurant.Latitude,
+                    restaurant.Longitude,
+                    restaurant.AddressStreet,
+                    restaurant.AddressNeighborhood,
+                    restaurant.AddressCity,
+                    restaurant.AddressState,
+                    restaurant.AddressZipCode,
+                    restaurant.Name);
+                var custPoint = GeoCalculator.ResolveAddressCoordinates(
+                    resolvedAddress.Latitude,
+                    resolvedAddress.Longitude,
+                    resolvedAddress.Street,
+                    resolvedAddress.Neighborhood,
+                    resolvedAddress.City,
+                    resolvedAddress.State,
+                    resolvedAddress.ZipCode,
+                    "Cliente");
+
+                var distanceKm = GeoCalculator.CalculateDistanceKm(
+                    restPoint.Latitude,
+                    restPoint.Longitude,
+                    custPoint.Latitude,
+                    custPoint.Longitude);
+                var maxRadius = restaurant.DeliveryRadiusKm > 0 ? restaurant.DeliveryRadiusKm : 8.0;
+                if (distanceKm > maxRadius)
+                {
+                    throw new Exception(
+                        $"Seu endereço ({resolvedAddress.City}/{resolvedAddress.State}) está a {distanceKm:F1} km e fora do raio de entrega de {maxRadius:F0} km do restaurante '{restaurant.Name}'.");
+                }
+            }
 
             order.DeliveryAddress = FormatAddress(resolvedAddress);
         }
