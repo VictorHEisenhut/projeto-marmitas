@@ -38,5 +38,9 @@ public interface IRestaurantRepository
     Task AddRestaurantUserAsync(RestaurantUser restaurantUser);
     void RemoveRestaurantUser(RestaurantUser restaurantUser);
 
+    Task<RestaurantIntegration?> GetIntegrationAsync(Guid restaurantId, string provider);
+    Task AddIntegrationAsync(RestaurantIntegration integration);
+    void RemoveIntegration(RestaurantIntegration integration);
+
     Task SaveChangesAsync();
 }

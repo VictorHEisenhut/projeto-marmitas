@@ -43,6 +43,9 @@ public sealed class PlatformBackgroundWorker : BackgroundService
         var gatewayFactory = scope.ServiceProvider.GetRequiredService<IPaymentGatewayFactory>();
         var now = DateTime.UtcNow;
 
+        var settlement = scope.ServiceProvider.GetRequiredService<IOrderPaymentSettlement>();
+        await settlement.RefreshPendingAsync(cancellationToken);
+
         var dueSubscriptions = await subscriptions.GetDueForRenewalAsync(now);
         var gateway = gatewayFactory.GetGateway();
 

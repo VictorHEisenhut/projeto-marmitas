@@ -42,6 +42,8 @@ public class AppDbContext : DbContext
     public DbSet<SubscriptionItem> SubscriptionItems => Set<SubscriptionItem>();
     public DbSet<SubscriptionDelivery> SubscriptionDeliveries => Set<SubscriptionDelivery>();
 
+    public DbSet<RestaurantIntegration> RestaurantIntegrations => Set<RestaurantIntegration>();
+
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<PaymentTransaction> PaymentTransactions => Set<PaymentTransaction>();
     public DbSet<Refund> Refunds => Set<Refund>();
@@ -75,6 +77,22 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Role>().HasData(
             new Role("customer", "Cliente da plataforma") { Id = customerRoleId }
         );
+
+        modelBuilder.Entity<ProductCategory>()
+            .HasOne(c => c.Restaurant)
+            .WithMany(r => r.Categories)
+            .HasForeignKey(c => c.RestaurantId)
+            .IsRequired(false);
+
+        modelBuilder.Entity<RestaurantIntegration>()
+            .HasIndex(i => new { i.RestaurantId, i.Provider })
+            .IsUnique();
+
+        modelBuilder.Entity<RestaurantIntegration>()
+            .HasOne(i => i.Restaurant)
+            .WithMany()
+            .HasForeignKey(i => i.RestaurantId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<ProductCategory>().HasData(
             new ProductCategory(null, "Tradicionais", 1) { Id = Guid.Parse("00000000-0000-0000-0002-000000000001") },
@@ -161,7 +179,7 @@ public class AppDbContext : DbContext
 
                 foreach (var prop in entry.Properties)
                 {
-                    if (prop.Metadata.Name is "PasswordHash" or "MfaSecret" or "AddonsJson")
+                    if (prop.Metadata.Name is "PasswordHash" or "MfaSecret" or "AddonsJson" or "AccessToken")
                         continue;
 
                     if (entry.State == EntityState.Added)

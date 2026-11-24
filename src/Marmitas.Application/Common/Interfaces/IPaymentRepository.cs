@@ -6,6 +6,9 @@ public interface IPaymentRepository
 {
     Task<Payment?> GetPaymentByOrderIdAsync(Guid orderId);
     Task<Payment?> GetPaymentByIdAsync(Guid id);
+    Task<Payment?> GetPaymentByExternalTransactionIdAsync(string externalTransactionId);
+    Task<List<Payment>> GetPendingMercadoPagoPaymentsAsync();
+    Task<bool> HasRestaurantNetEntryAsync(Guid orderId);
     Task<List<Payment>> GetAllPaymentsAsync();
     Task AddPaymentAsync(Payment payment);
 

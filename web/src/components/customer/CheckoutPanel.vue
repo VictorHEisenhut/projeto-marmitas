@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import {
   Check,
   Clock,
@@ -20,6 +20,8 @@ import AppButton from '@/components/ui/AppButton.vue'
 import AppBadge from '@/components/ui/AppBadge.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import { api, formatCurrency, getErrorMessage } from '@/services/api'
+import { createMercadoPagoCardToken, isValidCpf, onlyDigits } from '@/services/mercadopago'
+import { useAuthStore } from '@/stores/auth'
 import { useCartStore } from '@/stores/cart'
 import { useToastStore } from '@/stores/toast'
 import type {
@@ -27,6 +29,7 @@ import type {
   CartDeliveryEstimate,
   CouponValidationResponse,
   CreateOrderResponse,
+  MercadoPagoCheckoutOptions,
   PaymentResponse,
   Subscription,
 } from '@/types'
@@ -47,6 +50,7 @@ const emit = defineEmits<{
 
 const cart = useCartStore()
 const toast = useToastStore()
+const auth = useAuthStore()
 
 const couponCode = ref('')
 const appliedCoupon = ref<CouponValidationResponse | null>(null)
@@ -54,6 +58,13 @@ const validatingCoupon = ref(false)
 const paymentMethod = ref<'PIX' | 'CreditCard' | 'DebitCard'>('PIX')
 const submittingOrder = ref(false)
 const checkoutError = ref('')
+const paymentConfig = ref<MercadoPagoCheckoutOptions | null>(null)
+const payerCpf = ref('')
+const cardNumber = ref('')
+const cardName = ref('')
+const cardExpiry = ref('')
+const cardCvv = ref('')
+const pendingOrderId = ref<string | null>(null)
 
 // PIX Confirmation Modal + 15-min countdown
 const pixModalOpen = ref(false)
@@ -62,6 +73,7 @@ const pixOrderPin = ref<string | undefined>(undefined)
 const copiedPix = ref(false)
 const pixSecondsLeft = ref(900)
 let pixTimer: ReturnType<typeof setInterval> | null = null
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const pixFormattedCountdown = computed(() => {
   const m = Math.floor(pixSecondsLeft.value / 60)
@@ -82,9 +94,135 @@ function startPixCountdown() {
   }, 1000)
 }
 
+function stopPaymentPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+function startPaymentPolling(orderId: string) {
+  stopPaymentPolling()
+  let attempts = 0
+  pollTimer = setInterval(async () => {
+    attempts += 1
+    if (attempts > 180) {
+      stopPaymentPolling()
+      return
+    }
+
+    try {
+      const { data } = await api.get<PaymentResponse>(`/pedidos/${orderId}/pagamento`)
+      pixPayment.value = data
+      if (data.status === 'Approved') {
+        stopPaymentPolling()
+        toast.success('Pagamento PIX confirmado!', 'Pedido pago')
+      } else if (data.status === 'Declined' || data.status === 'Cancelled' || data.status === 'Failed') {
+        stopPaymentPolling()
+        pendingOrderId.value = null
+        toast.error('O PIX não foi confirmado. Você pode tentar de novo.')
+      }
+    } catch {
+      // A próxima consulta tenta de novo. O servidor também sincroniza o pagamento.
+    }
+  }, 5000)
+}
+
 onUnmounted(() => {
   if (pixTimer) clearInterval(pixTimer)
+  stopPaymentPolling()
 })
+
+const isLiveMercadoPago = computed(() => Boolean(paymentConfig.value?.live && paymentConfig.value.publicKey))
+
+const paymentOptions = computed(() => {
+  if (isLiveMercadoPago.value) {
+    return [
+      {
+        id: 'PIX' as const,
+        label: 'PIX',
+        subtitle: 'QR Code na conta Mercado Pago da loja',
+        icon: QrCode,
+      },
+      {
+        id: 'CreditCard' as const,
+        label: 'Cartão de crédito',
+        subtitle: 'Cobrança segura na conta da loja',
+        icon: CreditCard,
+      },
+    ]
+  }
+
+  return [
+    {
+      id: 'PIX' as const,
+      label: 'PIX Instantâneo',
+      subtitle: 'Aprovação imediata via QR Code ou Copia-e-Cola',
+      icon: QrCode,
+    },
+    {
+      id: 'CreditCard' as const,
+      label: 'Cartão de Crédito',
+      subtitle: 'Pagamento rápido e seguro',
+      icon: CreditCard,
+    },
+    {
+      id: 'DebitCard' as const,
+      label: 'Cartão de Débito',
+      subtitle: 'Débito online instantâneo',
+      icon: CreditCard,
+    },
+  ]
+})
+
+const pixQrSrc = computed(() => {
+  const raw = pixPayment.value?.pixQrCode
+  if (!raw) return ''
+  if (raw.startsWith('http') || raw.startsWith('data:')) return raw
+  if (raw.length > 80) return `data:image/png;base64,${raw}`
+  return ''
+})
+
+const paymentStatusLabel = computed(() => {
+  const status = pixPayment.value?.status
+  if (status === 'Approved') return 'Aprovado'
+  if (status === 'Pending') return 'Aguardando pagamento'
+  if (status === 'Declined' || status === 'Failed') return 'Recusado'
+  if (status === 'Cancelled') return 'Cancelado'
+  return status || 'Pendente'
+})
+
+watch(isLiveMercadoPago, (live) => {
+  if (live && paymentMethod.value === 'DebitCard') paymentMethod.value = 'PIX'
+})
+
+watch(
+  () => cart.restaurantId,
+  (restaurantId) => {
+    if (!restaurantId) {
+      paymentConfig.value = null
+      return
+    }
+    void loadPaymentConfig(restaurantId)
+  },
+  { immediate: true },
+)
+
+async function loadPaymentConfig(restaurantId: string) {
+  try {
+    const { data } = await api.get<MercadoPagoCheckoutOptions>(
+      `/restaurantes/${restaurantId}/integracoes/mercadopago/publico`,
+    )
+    paymentConfig.value = data
+  } catch {
+    paymentConfig.value = {
+      provider: 'MercadoPago',
+      enabled: false,
+      live: false,
+      methods: ['PIX', 'CreditCard', 'DebitCard'],
+    }
+  }
+}
 
 const selectedAddress = computed(
   () => props.addresses.find((a) => a.id === props.selectedAddressId) ?? null,
@@ -128,27 +266,6 @@ const finalCartTotal = computed(() => {
   return cart.totalAmount
 })
 
-const paymentOptions = [
-  {
-    id: 'PIX' as const,
-    label: 'PIX Instantâneo',
-    subtitle: 'Aprovação imediata via QR Code ou Copia-e-Cola',
-    icon: QrCode,
-  },
-  {
-    id: 'CreditCard' as const,
-    label: 'Cartão de Crédito',
-    subtitle: 'Pagamento rápido e seguro',
-    icon: CreditCard,
-  },
-  {
-    id: 'DebitCard' as const,
-    label: 'Cartão de Débito',
-    subtitle: 'Débito online instantâneo',
-    icon: CreditCard,
-  },
-]
-
 function generateIdempotencyKey(prefix: string): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `${prefix}-${crypto.randomUUID()}`
@@ -187,7 +304,7 @@ function removeCoupon() {
 }
 
 async function copyPixCode() {
-  const code = pixPayment.value?.pixCopyPaste || pixPayment.value?.pixQrCode
+  const code = pixPayment.value?.pixCopyPaste
   if (!code) return
   try {
     await navigator.clipboard.writeText(code)
@@ -201,7 +318,49 @@ async function copyPixCode() {
   }
 }
 
+function formatCpf(value: string) {
+  const digits = onlyDigits(value).slice(0, 11)
+  return digits
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d{1,2})$/, '$1-$2')
+}
+
+function formatCardNumber(value: string) {
+  return onlyDigits(value).slice(0, 16).replace(/(\d{4})(?=\d)/g, '$1 ')
+}
+
+function formatExpiry(value: string) {
+  const digits = onlyDigits(value).slice(0, 4)
+  if (digits.length <= 2) return digits
+  return `${digits.slice(0, 2)}/${digits.slice(2)}`
+}
+
+function readCardExpiry() {
+  const digits = onlyDigits(cardExpiry.value)
+  const month = digits.slice(0, 2)
+  const year = digits.slice(2, 4)
+  const monthNumber = Number(month)
+  if (month.length !== 2 || year.length !== 2 || monthNumber < 1 || monthNumber > 12) return null
+  return { month, year: `20${year}` }
+}
+
+function finishCheckout(orderId: string) {
+  stopPaymentPolling()
+  pixModalOpen.value = false
+  pendingOrderId.value = null
+  cart.clear()
+  appliedCoupon.value = null
+  couponCode.value = ''
+  emit('order-created', orderId)
+}
+
 async function handleCheckout() {
+  if (pendingOrderId.value) {
+    pixModalOpen.value = true
+    return
+  }
+
   if (!cart.restaurantId || cart.items.length === 0) return
   checkoutError.value = ''
 
@@ -217,11 +376,49 @@ async function handleCheckout() {
     return
   }
 
+  const live = isLiveMercadoPago.value
+  const requiresPayment = finalCartTotal.value > 0
+  const cpf = onlyDigits(payerCpf.value)
+  let cardToken: string | undefined
+  let paymentMethodId: string | undefined
+
+  if (live && requiresPayment) {
+    if (!isValidCpf(cpf)) {
+      checkoutError.value = 'Informe um CPF válido para o Mercado Pago.'
+      toast.warning(checkoutError.value)
+      return
+    }
+
+    if (paymentMethod.value === 'CreditCard') {
+      const expiry = readCardExpiry()
+      const number = onlyDigits(cardNumber.value)
+      if (number.length < 13 || !cardName.value.trim() || !expiry || onlyDigits(cardCvv.value).length < 3) {
+        checkoutError.value = 'Preencha número, nome, validade e CVV do cartão.'
+        toast.warning(checkoutError.value)
+        return
+      }
+    }
+  }
+
   submittingOrder.value = true
   const orderIdempotencyKey = generateIdempotencyKey('order')
   const paymentIdempotencyKey = generateIdempotencyKey('pay')
 
   try {
+    if (live && requiresPayment && paymentMethod.value === 'CreditCard') {
+      const expiry = readCardExpiry()!
+      const tokenized = await createMercadoPagoCardToken(paymentConfig.value!.publicKey!, {
+        cardNumber: onlyDigits(cardNumber.value),
+        holderName: cardName.value.trim(),
+        expirationMonth: expiry.month,
+        expirationYear: expiry.year,
+        securityCode: onlyDigits(cardCvv.value),
+        cpf,
+      })
+      cardToken = tokenized.token
+      paymentMethodId = tokenized.paymentMethodId
+    }
+
     const { data: created } = await api.post<CreateOrderResponse>(
       '/pedidos',
       {
@@ -249,7 +446,14 @@ async function handleCheckout() {
     const { data: paymentRes } = await api.post<PaymentResponse>(
       `/pedidos/${created.orderId}/pagamento`,
       {
-        method: paymentMethod.value,
+        method: requiresPayment ? paymentMethod.value : 'PIX',
+        gateway: 'MercadoPago',
+        cardToken,
+        paymentMethodId,
+        installments: 1,
+        payerEmail: auth.user?.email,
+        payerIdentificationType: cpf ? 'CPF' : undefined,
+        payerIdentificationNumber: cpf || undefined,
       },
       {
         headers: {
@@ -258,26 +462,54 @@ async function handleCheckout() {
       },
     )
 
-    cart.clear()
-    appliedCoupon.value = null
-    couponCode.value = ''
+    const hasPixCode = Boolean(paymentRes?.pixCopyPaste || paymentRes?.pixQrCode)
+    const showPix = paymentMethod.value === 'PIX' && hasPixCode
 
-    if (paymentMethod.value === 'PIX' && (paymentRes?.pixCopyPaste || paymentRes?.pixQrCode)) {
+    if (showPix) {
       pixPayment.value = paymentRes
       pixOrderPin.value = created.confirmationPin
+      pendingOrderId.value = paymentRes.status === 'Pending' ? created.orderId : null
       pixModalOpen.value = true
       startPixCountdown()
+      emit('order-created', created.orderId)
+      if (paymentRes.status === 'Pending') {
+        startPaymentPolling(created.orderId)
+        toast.info('PIX gerado. Pague para confirmarmos o pedido.', 'Aguardando pagamento')
+      } else {
+        toast.success('Pedido confirmado e pagamento aprovado!', 'Pedido realizado')
+      }
+      return
+    }
+
+    if (paymentRes.status === 'Pending') {
+      pixPayment.value = paymentRes
+      pixOrderPin.value = created.confirmationPin
+      pendingOrderId.value = created.orderId
+      pixModalOpen.value = true
+      startPixCountdown()
+      startPaymentPolling(created.orderId)
+      emit('order-created', created.orderId)
+      toast.info('Pagamento enviado. Aguardando confirmação do Mercado Pago.')
+      return
     }
 
     toast.success('Pedido confirmado e pagamento aprovado!', 'Pedido realizado')
-    emit('order-created', created.orderId)
+    finishCheckout(created.orderId)
   } catch (err) {
-    const msg = getErrorMessage(err, 'Não foi possível concluir o pedido.')
+    const msg = err instanceof Error && !('isAxiosError' in err)
+      ? err.message
+      : getErrorMessage(err, 'Não foi possível concluir o pedido.')
     checkoutError.value = msg
     toast.error(msg)
   } finally {
     submittingOrder.value = false
   }
+}
+
+function closePixModal() {
+  const orderId = pixPayment.value?.orderId || pendingOrderId.value
+  if (orderId) finishCheckout(orderId)
+  else pixModalOpen.value = false
 }
 </script>
 
@@ -533,7 +765,14 @@ async function handleCheckout() {
           <h2 class="font-display text-base font-extrabold text-ink">Forma de pagamento</h2>
         </div>
 
-        <div class="grid gap-3 sm:grid-cols-3">
+        <p v-if="isLiveMercadoPago" class="mb-3 text-xs text-ink-secondary">
+          Pagamento processado pelo Mercado Pago da loja. PIX e cartão de crédito entram na conta conectada.
+        </p>
+        <p v-else-if="paymentConfig && !paymentConfig.live" class="mb-3 text-xs text-ink-muted">
+          Esta loja ainda não conectou o Mercado Pago. O pagamento segue em modo de demonstração.
+        </p>
+
+        <div class="grid gap-3" :class="paymentOptions.length > 2 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'">
           <button
             v-for="opt in paymentOptions"
             :key="opt.id"
@@ -568,6 +807,68 @@ async function handleCheckout() {
               <p class="mt-0.5 text-[11px] leading-snug text-ink-muted">{{ opt.subtitle }}</p>
             </div>
           </button>
+        </div>
+
+        <div v-if="isLiveMercadoPago && finalCartTotal > 0" class="mt-4 space-y-3">
+          <label class="block text-xs font-bold text-ink-secondary">
+            CPF do pagador
+            <input
+              :value="payerCpf"
+              inputmode="numeric"
+              autocomplete="off"
+              maxlength="14"
+              placeholder="000.000.000-00"
+              class="mt-1.5 w-full rounded-xl border border-line-strong bg-surface px-3 py-2.5 text-sm font-semibold text-ink focus:border-brand-600 focus:outline-none"
+              @input="payerCpf = formatCpf(($event.target as HTMLInputElement).value)"
+            />
+          </label>
+
+          <div v-if="paymentMethod === 'CreditCard'" class="grid gap-3 sm:grid-cols-2">
+            <label class="block text-xs font-bold text-ink-secondary sm:col-span-2">
+              Número do cartão
+              <input
+                :value="cardNumber"
+                inputmode="numeric"
+                autocomplete="cc-number"
+                placeholder="0000 0000 0000 0000"
+                class="mt-1.5 w-full rounded-xl border border-line-strong bg-surface px-3 py-2.5 text-sm font-semibold text-ink focus:border-brand-600 focus:outline-none"
+                @input="cardNumber = formatCardNumber(($event.target as HTMLInputElement).value)"
+              />
+            </label>
+            <label class="block text-xs font-bold text-ink-secondary sm:col-span-2">
+              Nome impresso no cartão
+              <input
+                v-model="cardName"
+                autocomplete="cc-name"
+                placeholder="Como está no cartão"
+                class="mt-1.5 w-full rounded-xl border border-line-strong bg-surface px-3 py-2.5 text-sm font-semibold text-ink focus:border-brand-600 focus:outline-none"
+              />
+            </label>
+            <label class="block text-xs font-bold text-ink-secondary">
+              Validade
+              <input
+                :value="cardExpiry"
+                inputmode="numeric"
+                autocomplete="cc-exp"
+                placeholder="MM/AA"
+                maxlength="5"
+                class="mt-1.5 w-full rounded-xl border border-line-strong bg-surface px-3 py-2.5 text-sm font-semibold text-ink focus:border-brand-600 focus:outline-none"
+                @input="cardExpiry = formatExpiry(($event.target as HTMLInputElement).value)"
+              />
+            </label>
+            <label class="block text-xs font-bold text-ink-secondary">
+              CVV
+              <input
+                :value="cardCvv"
+                inputmode="numeric"
+                autocomplete="cc-csc"
+                placeholder="123"
+                maxlength="4"
+                class="mt-1.5 w-full rounded-xl border border-line-strong bg-surface px-3 py-2.5 text-sm font-semibold text-ink focus:border-brand-600 focus:outline-none"
+                @input="cardCvv = onlyDigits(($event.target as HTMLInputElement).value).slice(0, 4)"
+              />
+            </label>
+          </div>
         </div>
       </AppCard>
     </div>
@@ -685,12 +986,12 @@ async function handleCheckout() {
           :loading="submittingOrder"
           @click="handleCheckout"
         >
-          Confirmar e pagar pedido
+          {{ pendingOrderId ? 'Ver pagamento PIX' : 'Confirmar e pagar pedido' }}
         </AppButton>
 
         <div class="flex items-center justify-center gap-1.5 text-[11px] text-ink-muted">
           <ShieldCheck class="h-3.5 w-3.5 text-fresh-600" />
-          <span>Transação protegida com chave de idempotência</span>
+          <span>{{ isLiveMercadoPago ? 'Cartão tokenizado pelo Mercado Pago' : 'Transação protegida com chave de idempotência' }}</span>
         </div>
       </AppCard>
     </aside>
@@ -699,15 +1000,21 @@ async function handleCheckout() {
   <!-- PIX Confirmation Modal with Visual QR SVG + 15-min Countdown -->
   <AppModal
     :open="pixModalOpen"
-    title="Pagamento PIX Confirmado"
-    subtitle="Comprovante e código PIX gerados pelo gateway de pagamento."
+    :title="pixPayment?.status === 'Pending' ? 'Pague com PIX' : 'Pagamento PIX confirmado'"
+    :subtitle="pixPayment?.status === 'Pending' ? 'O pedido confirma sozinho quando o Mercado Pago receber o pagamento.' : 'Comprovante e código PIX gerados pelo Mercado Pago.'"
     max-width="md"
-    @close="pixModalOpen = false"
+    @close="closePixModal"
   >
     <div v-if="pixPayment" class="space-y-5 text-center">
       <!-- Visual QR Code Matrix Frame + Countdown -->
       <div class="mx-auto inline-flex flex-col items-center gap-2 rounded-3xl border border-line bg-white p-4 shadow-card">
-        <svg viewBox="0 0 120 120" class="h-36 w-36 text-stone-900" aria-label="QR Code PIX">
+        <img
+          v-if="pixQrSrc"
+          :src="pixQrSrc"
+          alt="QR Code PIX"
+          class="h-44 w-44 rounded-xl bg-white object-contain"
+        />
+        <svg v-else viewBox="0 0 120 120" class="h-36 w-36 text-stone-900" aria-label="QR Code PIX">
           <rect width="120" height="120" fill="#ffffff" />
           <!-- Top-left finder -->
           <rect x="8" y="8" width="28" height="28" rx="4" fill="none" stroke="currentColor" stroke-width="5" />
@@ -741,8 +1048,8 @@ async function handleCheckout() {
       </div>
 
       <div>
-        <AppBadge variant="fresh" size="sm" dot>
-          Status: {{ pixPayment.status }}
+        <AppBadge :variant="pixPayment.status === 'Approved' ? 'fresh' : 'warning'" size="sm" dot>
+          Status: {{ paymentStatusLabel }}
         </AppBadge>
         <p class="mt-2 font-display text-2xl font-extrabold text-ink tabular-nums">
           {{ formatCurrency(pixPayment.amount) }}
@@ -764,12 +1071,12 @@ async function handleCheckout() {
         </p>
       </div>
 
-      <div v-if="pixPayment.pixCopyPaste || pixPayment.pixQrCode" class="space-y-2 text-left">
+      <div v-if="pixPayment.pixCopyPaste" class="space-y-2 text-left">
         <label class="block text-xs font-bold text-ink-secondary">
           PIX Copia-e-Cola
         </label>
         <div class="rounded-xl border border-line bg-surface-subtle p-3 font-mono text-[11px] break-all text-ink-secondary max-h-24 overflow-y-auto">
-          {{ pixPayment.pixCopyPaste || pixPayment.pixQrCode }}
+          {{ pixPayment.pixCopyPaste }}
         </div>
         <AppButton variant="outline" size="md" block @click="copyPixCode">
           <Check v-if="copiedPix" class="h-4 w-4 text-fresh-600" />
@@ -780,7 +1087,7 @@ async function handleCheckout() {
     </div>
 
     <template #footer>
-      <AppButton variant="primary" size="md" block @click="pixModalOpen = false">
+      <AppButton variant="primary" size="md" block @click="closePixModal">
         Acompanhar meu pedido
       </AppButton>
     </template>

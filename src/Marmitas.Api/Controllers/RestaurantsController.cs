@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Marmitas.Application.Common.Interfaces;
+using Marmitas.Application.Integrations;
 using Marmitas.Application.Platform.Dtos;
 using Marmitas.Application.Restaurants.Queries;
 using Marmitas.Domain.Entities;
@@ -17,17 +18,20 @@ public class RestaurantsController : ControllerBase
     private readonly IRestaurantRepository _restaurantRepository;
     private readonly IUserRepository _userRepository;
     private readonly ICustomerProfileRepository _profiles;
+    private readonly IRestaurantIntegrationService _integrations;
 
     public RestaurantsController(
         IRestaurantQueryService restaurantQueryService,
         IRestaurantRepository restaurantRepository,
         IUserRepository userRepository,
-        ICustomerProfileRepository profiles)
+        ICustomerProfileRepository profiles,
+        IRestaurantIntegrationService integrations)
     {
         _restaurantQueryService = restaurantQueryService;
         _restaurantRepository = restaurantRepository;
         _userRepository = userRepository;
         _profiles = profiles;
+        _integrations = integrations;
     }
 
     [HttpGet]
@@ -390,6 +394,50 @@ public class RestaurantsController : ControllerBase
 
         _restaurantRepository.RemoveRestaurantUser(target);
         await _restaurantRepository.SaveChangesAsync();
+        return NoContent();
+    }
+
+    [HttpGet("{id}/integracoes/mercadopago/publico")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetMercadoPagoCheckout(Guid id, CancellationToken cancellationToken)
+    {
+        var options = await _integrations.GetCheckoutOptionsAsync(id, cancellationToken);
+        return Ok(options);
+    }
+
+    [HttpGet("{id}/integracoes/mercadopago")]
+    [Authorize(Roles = "restaurant_owner,restaurant_staff,admin,super_admin")]
+    public async Task<IActionResult> GetMercadoPagoIntegration(Guid id, CancellationToken cancellationToken)
+    {
+        if (!await CanManageRestaurantAsync(id))
+            return Forbid();
+
+        var status = await _integrations.GetStatusAsync(id, cancellationToken);
+        return Ok(status);
+    }
+
+    [HttpPut("{id}/integracoes/mercadopago")]
+    [Authorize(Roles = "restaurant_owner,restaurant_staff,admin,super_admin")]
+    public async Task<IActionResult> SaveMercadoPagoIntegration(
+        Guid id,
+        [FromBody] SaveMercadoPagoIntegrationRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!await CanManageRestaurantAsync(id))
+            return Forbid();
+
+        var status = await _integrations.SaveMercadoPagoAsync(id, request, cancellationToken);
+        return Ok(status);
+    }
+
+    [HttpDelete("{id}/integracoes/mercadopago")]
+    [Authorize(Roles = "restaurant_owner,admin,super_admin")]
+    public async Task<IActionResult> DisconnectMercadoPago(Guid id, CancellationToken cancellationToken)
+    {
+        if (!await CanManageRestaurantAsync(id))
+            return Forbid();
+
+        await _integrations.DisconnectMercadoPagoAsync(id, cancellationToken);
         return NoContent();
     }
 

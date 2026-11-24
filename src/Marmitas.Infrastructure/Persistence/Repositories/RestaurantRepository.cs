@@ -210,6 +210,22 @@ public class RestaurantRepository : IRestaurantRepository
         _context.RestaurantUsers.Remove(restaurantUser);
     }
 
+    public Task<RestaurantIntegration?> GetIntegrationAsync(Guid restaurantId, string provider)
+    {
+        return _context.RestaurantIntegrations.FirstOrDefaultAsync(i =>
+            i.RestaurantId == restaurantId && i.Provider == provider);
+    }
+
+    public async Task AddIntegrationAsync(RestaurantIntegration integration)
+    {
+        await _context.RestaurantIntegrations.AddAsync(integration);
+    }
+
+    public void RemoveIntegration(RestaurantIntegration integration)
+    {
+        _context.RestaurantIntegrations.Remove(integration);
+    }
+
     public async Task SaveChangesAsync()
     {
         await _context.SaveChangesAsync();

@@ -6,7 +6,15 @@ public record PaymentChargeRequest(
     string Method,
     string? Gateway = null,
     string? CardToken = null,
-    string? CustomerEmail = null);
+    string? CustomerEmail = null,
+    string? AccessToken = null,
+    string? PaymentMethodId = null,
+    string? IssuerId = null,
+    int Installments = 1,
+    string? PayerIdentificationType = null,
+    string? PayerIdentificationNumber = null,
+    string? Description = null,
+    string? IdempotencyKey = null);
 
 public record PaymentGatewayResult(
     bool Approved,
@@ -15,7 +23,8 @@ public record PaymentGatewayResult(
     string Status,
     string? PixQrCode,
     string? PixCopyPaste,
-    string? FailureReason = null);
+    string? FailureReason = null,
+    bool Pending = false);
 
 public interface IPaymentGateway
 {

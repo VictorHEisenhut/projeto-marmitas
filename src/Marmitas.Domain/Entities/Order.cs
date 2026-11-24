@@ -83,7 +83,7 @@ public class Order : Entity
             OrderStatus.Delivered => nextStatus is OrderStatus.Refunded,
             OrderStatus.Cancelled => nextStatus is OrderStatus.Refunded,
             OrderStatus.Refunded => false,
-            OrderStatus.Failed => nextStatus is OrderStatus.PaymentPending or OrderStatus.Cancelled,
+            OrderStatus.Failed => nextStatus is OrderStatus.PaymentPending or OrderStatus.Paid or OrderStatus.Cancelled,
             _ => false
         };
     }

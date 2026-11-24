@@ -16,7 +16,7 @@ public abstract class BasePaymentGateway : IPaymentGateway
 
     public abstract string ProviderName { get; }
 
-    public Task<PaymentGatewayResult> ChargeAsync(PaymentChargeRequest request, CancellationToken cancellationToken = default)
+    public virtual Task<PaymentGatewayResult> ChargeAsync(PaymentChargeRequest request, CancellationToken cancellationToken = default)
     {
         if (string.Equals(request.CardToken, "tok_declined", StringComparison.OrdinalIgnoreCase))
         {
@@ -74,8 +74,34 @@ public abstract class BasePaymentGateway : IPaymentGateway
 
 public sealed class MercadoPagoPaymentGateway : BasePaymentGateway
 {
-    public MercadoPagoPaymentGateway(IConfiguration configuration) : base(configuration) { }
+    private readonly IMercadoPagoApi _api;
+
+    public MercadoPagoPaymentGateway(IConfiguration configuration, IMercadoPagoApi api) : base(configuration)
+    {
+        _api = api;
+    }
+
     public override string ProviderName => "MercadoPago";
+
+    public override Task<PaymentGatewayResult> ChargeAsync(PaymentChargeRequest request, CancellationToken cancellationToken = default)
+    {
+        if (request.Amount <= 0)
+        {
+            var freeId = $"free_{request.OrderId:N}";
+            return Task.FromResult(new PaymentGatewayResult(
+                true,
+                ProviderName,
+                freeId.Length > 24 ? freeId[..24] : freeId,
+                "Approved",
+                null,
+                null));
+        }
+
+        if (string.IsNullOrWhiteSpace(request.AccessToken))
+            return base.ChargeAsync(request, cancellationToken);
+
+        return _api.ChargeAsync(request, cancellationToken);
+    }
 }
 
 public sealed class StripePaymentGateway : BasePaymentGateway

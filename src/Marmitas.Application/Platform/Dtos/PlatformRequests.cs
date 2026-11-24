@@ -126,6 +126,12 @@ public class ProcessPaymentRequest
     public string Method { get; set; } = "PIX";
     public string? Gateway { get; set; }
     public string? CardToken { get; set; }
+    public string? PaymentMethodId { get; set; }
+    public string? IssuerId { get; set; }
+    public int Installments { get; set; } = 1;
+    public string? PayerEmail { get; set; }
+    public string? PayerIdentificationType { get; set; }
+    public string? PayerIdentificationNumber { get; set; }
 }
 
 public class RefundPaymentRequest

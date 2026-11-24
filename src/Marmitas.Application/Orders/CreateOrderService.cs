@@ -499,6 +499,7 @@ public class CreateOrderService : ICreateOrderService
         var code = orderId.ToString()[..8];
         return status switch
         {
+            OrderStatus.PaymentPending => ("Aguardando pagamento", $"O pedido #{code} aguarda a confirmação do PIX."),
             OrderStatus.Paid => ("Pagamento aprovado", $"O pagamento do pedido #{code} foi aprovado."),
             OrderStatus.Confirmed => ("Pedido confirmado", $"O restaurante confirmou seu pedido #{code}."),
             OrderStatus.Preparing => ("Pedido em preparo", $"Sua marmita do pedido #{code} está sendo preparada."),

@@ -47,6 +47,15 @@ builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
 builder.Services.AddScoped<IPasswordHasher, BCryptPasswordHasher>();
 builder.Services.AddScoped<ITokenService, JwtTokenService>();
 
+builder.Services.AddSingleton<IntegrationSecretProtector>();
+builder.Services.AddHttpClient<IMercadoPagoApi, MercadoPagoApiClient>(client =>
+{
+    client.BaseAddress = new Uri("https://api.mercadopago.com/");
+    client.Timeout = TimeSpan.FromSeconds(25);
+});
+builder.Services.AddScoped<IRestaurantIntegrationService, RestaurantIntegrationService>();
+builder.Services.AddScoped<IOrderPaymentSettlement, OrderPaymentSettlement>();
+
 builder.Services.AddScoped<IPaymentGateway, MercadoPagoPaymentGateway>();
 builder.Services.AddScoped<IPaymentGateway, StripePaymentGateway>();
 builder.Services.AddScoped<IPaymentGateway, PagarMePaymentGateway>();

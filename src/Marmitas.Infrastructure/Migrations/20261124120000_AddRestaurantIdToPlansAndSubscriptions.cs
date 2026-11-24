@@ -31,6 +31,7 @@ namespace Marmitas.Infrastructure.Migrations
 
                 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS restaurant_id UUID;
                 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS restaurant_name VARCHAR(150) NOT NULL DEFAULT '';
+                ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS preferred_restaurant_id UUID;
 
                 UPDATE subscriptions s
                 SET restaurant_id = COALESCE(p.restaurant_id, s.preferred_restaurant_id, (SELECT id FROM restaurants ORDER BY created_at LIMIT 1), '00000000-0000-0000-0000-000000000000'),

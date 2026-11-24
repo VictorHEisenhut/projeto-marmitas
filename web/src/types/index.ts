@@ -480,6 +480,26 @@ export interface PaymentResponse {
   paidAt?: string | null
 }
 
+export interface MercadoPagoCheckoutOptions {
+  provider: string
+  enabled: boolean
+  live: boolean
+  publicKey?: string | null
+  methods: string[]
+}
+
+export interface RestaurantIntegrationStatus {
+  provider: string
+  enabled: boolean
+  connected: boolean
+  publicKey?: string | null
+  accessTokenHint?: string | null
+  accountEmail?: string | null
+  accountId?: string | null
+  environment?: 'test' | 'production' | string | null
+  updatedAt?: string | null
+}
+
 export interface UserConsent {
   id: string
   userId: string

@@ -9,6 +9,7 @@ import {
   LogOut,
   Menu,
   Moon,
+  Plug,
   RefreshCw,
   Settings,
   Sparkles,
@@ -23,7 +24,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import type { Restaurant } from '@/types'
 
-export type PartnerModule = 'orders' | 'menu' | 'plans' | 'financials' | 'settings'
+export type PartnerModule = 'orders' | 'menu' | 'plans' | 'financials' | 'integrations' | 'settings'
 
 defineProps<{
   activeModule: PartnerModule
@@ -50,6 +51,7 @@ const navItems: Array<{ id: PartnerModule; label: string; icon: typeof Clipboard
   { id: 'menu', label: 'Cardápio', icon: UtensilsCrossed },
   { id: 'plans', label: 'Planos da Loja', icon: Sparkles },
   { id: 'financials', label: 'Financeiro', icon: DollarSign },
+  { id: 'integrations', label: 'Integrações', icon: Plug },
   { id: 'settings', label: 'Loja, Zonas & Equipe', icon: Settings },
 ]
 

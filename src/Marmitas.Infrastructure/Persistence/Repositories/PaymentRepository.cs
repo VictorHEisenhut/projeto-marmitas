@@ -25,6 +25,25 @@ public class PaymentRepository : IPaymentRepository
         return _context.Payments.FirstOrDefaultAsync(p => p.Id == id);
     }
 
+    public Task<Payment?> GetPaymentByExternalTransactionIdAsync(string externalTransactionId)
+    {
+        return _context.Payments.FirstOrDefaultAsync(p => p.ExternalTransactionId == externalTransactionId);
+    }
+
+    public Task<List<Payment>> GetPendingMercadoPagoPaymentsAsync()
+    {
+        return _context.Payments
+            .Where(p => p.Status == "Pending" && p.Gateway == "MercadoPago" && p.ExternalTransactionId != null)
+            .OrderBy(p => p.CreatedAt)
+            .Take(50)
+            .ToListAsync();
+    }
+
+    public Task<bool> HasRestaurantNetEntryAsync(Guid orderId)
+    {
+        return _context.FinancialTransactions.AnyAsync(t => t.OrderId == orderId && t.Category == "RestaurantNet");
+    }
+
     public Task<List<Payment>> GetAllPaymentsAsync()
     {
         return _context.Payments

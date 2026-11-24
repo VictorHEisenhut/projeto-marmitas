@@ -6,6 +6,7 @@ import PartnerOrdersModule from '@/components/partner/PartnerOrdersModule.vue'
 import PartnerMenuModule from '@/components/partner/PartnerMenuModule.vue'
 import PartnerPlansModule from '@/components/partner/PartnerPlansModule.vue'
 import PartnerFinancialsModule from '@/components/partner/PartnerFinancialsModule.vue'
+import PartnerIntegrationsModule from '@/components/partner/PartnerIntegrationsModule.vue'
 import PartnerSettingsModule from '@/components/partner/PartnerSettingsModule.vue'
 import AppSkeleton from '@/components/ui/AppSkeleton.vue'
 import { api, getErrorMessage } from '@/services/api'
@@ -204,6 +205,12 @@ onUnmounted(() => {
       <PartnerFinancialsModule
         v-else-if="activeModule === 'financials'"
         :financials="financials"
+      />
+
+      <PartnerIntegrationsModule
+        v-else-if="activeModule === 'integrations'"
+        :restaurant-id="currentRestaurant.id"
+        :restaurant-name="currentRestaurant.name"
       />
 
       <PartnerSettingsModule
